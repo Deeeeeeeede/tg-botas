@@ -1,19 +1,22 @@
-# [Project name]
+# Shop Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A full-featured Telegram shop bot with admin management, product catalog, customer tiers, discount system, and worker roles.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — build and run the API server + Telegram bot (port 8080)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string (provisioned automatically)
+- Required env: `BOT_TOKEN` — Telegram bot token
+- Required env: `OWNER_ID` — Owner's Telegram user ID (auto-added to admin list on startup)
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
+- Bot: Telegraf v4 (long polling)
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod (`zod/v4`), `drizzle-zod`
@@ -22,23 +25,65 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/api-server/src/bot/` — all Telegram bot code
+  - `index.ts` — bot setup, all command and callback handlers
+  - `db.ts` — database query helpers
+  - `pricing.ts` — discount price stack calculation
+  - `keyboards.ts` — reusable inline keyboard builders
+  - `utils.ts` — formatting, date, uuid helpers
+  - `handlers/` — per-feature handlers (admin-geography, admin-products, admin-users, admin-analytics, admin-comms, admin-discounts, admin-tools, worker, shop)
+- `lib/db/src/schema/bot.ts` — all database table definitions
+
+## Bot Commands
+
+| Command | Who | What |
+|---------|-----|------|
+| `/start` | Anyone | Customer home screen |
+| `/admin` | Admin | Admin menu |
+| `/klad` | Worker | Worker upload menu |
+| `/terminate` | Admin | Cancel current flow, return to admin menu |
+| `/done` | Admin/Worker | Finish bulk upload |
+
+## Admin Menu Features
+
+- **Analytics** — sales reports by period, city, type; top products
+- **Purchases** — live feed of all paid orders
+- **Products Menu** — add, bulk add, manage, view stock, product types, bulk price edit
+- **Geography Menu** — cities and districts CRUD
+- **Users Menu** — search, ban/unban, reseller management, CSV export
+- **Discounts Menu** — discount codes, product discounts (🔥), reseller discounts (👑), tier system (🏆)
+- **Communications** — broadcast to all users, welcome message templates, reviews
+- **Tools & Settings** — add balance, clear reservations, payment recovery, refunds, backup tokens
+- **Workers (/klad)** — manage trusted product uploaders
+
+## Customer Tier Defaults
+
+| Tier | Threshold (purchases) | Global Discount |
+|------|-----------------------|-----------------|
+| New | 0 | 0% |
+| Regular | 5 | 0% |
+| VIP | 15 | 5% |
+| Legend | 30 | 10% |
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Bot runs in the same process as the Express API server (long polling, not webhook)
+- Session state stored in memory (Telegraf built-in session)
+- Price calculation applies discounts in order: fire (sale) → crown (reseller) → trophy (tier rule) → tier global % → discount code
+- Workers use `/klad` and can only upload to existing city/district/type/size combinations
+- Products store content as either text (inline) or Telegram file_id (for photos, documents, videos, GIFs)
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Bot token and owner ID stored as env vars (BOT_TOKEN, OWNER_ID)
+- Timestamps shown in Europe/Vilnius timezone
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- After any schema change, run `pnpm --filter @workspace/db run push` then rebuild
+- After code changes, the api-server workflow auto-rebuilds (dev script runs build then start)
+- The bot uses long polling — only one instance should run at a time
+- `@workspace/db` lib must be rebuilt (`pnpm run typecheck:libs`) after schema changes before api-server typecheck works
 
 ## Pointers
 

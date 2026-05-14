@@ -26,7 +26,7 @@ export async function getSolPrice(): Promise<number> {
   try {
     const res = await fetch(
       "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eur",
-      { signal: controller.signal }
+      { signal: controller.signal },
     );
     const data = (await res.json()) as any;
     return Number(data?.solana?.eur ?? 0);
@@ -39,7 +39,7 @@ export async function getSolPrice(): Promise<number> {
 
 export async function showCryptoMenu(
   ctx: Context & { session: BotSession },
-  eurAmount: number
+  eurAmount: number,
 ) {
   ctx.session.data = { ...(ctx.session.data ?? {}), pendingEur: eurAmount };
   const kb = inlineKeyboard([
@@ -54,9 +54,7 @@ export async function showCryptoMenu(
   }
 }
 
-export async function showSolInvoice(
-  ctx: Context & { session: BotSession }
-) {
+export async function showSolInvoice(ctx: Context & { session: BotSession }) {
   const data = ctx.session.data ?? {};
   const eurAmount = Number(data["discountedTotal"] ?? data["pendingEur"] ?? 0);
 
@@ -64,7 +62,7 @@ export async function showSolInvoice(
   if (solPrice <= 0) {
     await ctx.editMessageText(
       "⚠️ Could not fetch SOL price. Please try again.",
-      { ...inlineKeyboard([[BACK_BTN("shop:basket")]]) }
+      { ...inlineKeyboard([[BACK_BTN("shop:basket")]]) },
     );
     return;
   }
@@ -120,7 +118,7 @@ export async function showSolInvoice(
 }
 
 export async function checkSolPayment(
-  ctx: Context & { session: BotSession }
+  ctx: Context & { session: BotSession },
 ): Promise<void> {
   const data = ctx.session.data ?? {};
   const expectedSol = Number(data["solAmount"] ?? 0);
@@ -183,8 +181,7 @@ export async function checkSolPayment(
       const tx = txData?.result;
       if (!tx) continue;
 
-      const accountKeys: string[] =
-        tx.transaction?.message?.accountKeys ?? [];
+      const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
       const walletIndex = accountKeys.indexOf(SOL_WALLET);
       if (walletIndex === -1) continue;
 
@@ -196,7 +193,7 @@ export async function checkSolPayment(
         const solPrice = await getSolPrice();
         const paidEur = receivedSol * solPrice;
         const expectedEur = Number(
-          data["discountedTotal"] ?? data["pendingEur"] ?? 0
+          data["discountedTotal"] ?? data["pendingEur"] ?? 0,
         );
         const overpayEur = Math.max(0, paidEur - expectedEur);
         await completePurchase(ctx, "sol", overpayEur);
@@ -234,7 +231,7 @@ export async function checkSolPayment(
 export async function completePurchase(
   ctx: Context & { session: BotSession },
   paymentMethod: string,
-  overpayEur = 0
+  overpayEur = 0,
 ): Promise<void> {
   const telegramId = ctx.from!.id;
   const user = await getUser(telegramId);
@@ -249,7 +246,7 @@ export async function completePurchase(
           ...inlineKeyboard([
             [{ text: "🏠 Home", callback_data: "shop:home" }],
           ]),
-        }
+        },
       );
     }
     return;

@@ -374,7 +374,7 @@ export async function showShopSizes(
   const user = await getUser(telegramId);
   if (!user) return;
 
-  const [city, district, type] = await Promise.all([
+  const [city, district, type, allTypes] = await Promise.all([
     db
       .select()
       .from(citiesTable)
@@ -390,14 +390,36 @@ export async function showShopSizes(
       .from(productTypesTable)
       .where(eq(productTypesTable.id, typeId))
       .then((r) => r[0]),
+    getProductTypes(),
   ]);
+
+  // Count how many types have available stock in this district
+  let availableTypeCount = 0;
+  for (const t of allTypes) {
+    const [cnt] = await db
+      .select({ count: count() })
+      .from(productsTable)
+      .where(
+        and(
+          eq(productsTable.cityId, cityId),
+          eq(productsTable.districtId, districtId),
+          eq(productsTable.typeId, t.id),
+          eq(productsTable.status, "available")
+        )
+      );
+    if ((cnt?.count ?? 0) > 0) availableTypeCount++;
+  }
+
+  // If only 1 type, going back to types would auto-redirect here again — skip to districts
+  const backTarget =
+    availableTypeCount > 1
+      ? `shop:types:${cityId}:${districtId}`
+      : `shop:dist:${cityId}`;
 
   const sizes = await getSizesForTypeInDistrict(cityId, districtId, typeId);
   if (sizes.length === 0) {
     await ctx.editMessageText("No products available.", {
-      ...inlineKeyboard([
-        [BACK_BTN(`shop:types:${cityId}:${districtId}`)],
-      ]),
+      ...inlineKeyboard([[BACK_BTN(backTarget)]]),
     });
     return;
   }
@@ -436,7 +458,7 @@ export async function showShopSizes(
   const kb = inlineKeyboard([
     ...buttons,
     [
-      BACK_BTN(`shop:types:${cityId}:${districtId}`),
+      BACK_BTN(backTarget),
       { text: "🏠 Home", callback_data: "shop:home" },
     ],
   ]);

@@ -9,8 +9,8 @@ import {
   productTypesTable,
   citiesTable,
   districtsTable,
-  reviewsTable,
   tierLevelsTable,
+  discountCodesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, count } from "drizzle-orm";
 import {
@@ -25,9 +25,21 @@ import {
   updateUserTier,
   getUser,
 } from "../db";
-import { calculatePrice, priceLabel } from "../pricing";
-import { formatEur, formatDate, generateQueueId, chunk } from "../utils";
+import { calculatePrice } from "../pricing";
+import { formatEur, formatDate, generateQueueId } from "../utils";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
+import {
+  completePurchase,
+  showCryptoMenu,
+  sendProductMedia,
+} from "./payments";
+
+const TIER_EMOJI: Record<string, string> = {
+  New: "🌱",
+  Regular: "⭐",
+  VIP: "💎",
+  Legend: "👑",
+};
 
 export async function showHome(ctx: Context & { session: BotSession }) {
   const telegramId = ctx.from!.id;
@@ -43,35 +55,32 @@ export async function showHome(ctx: Context & { session: BotSession }) {
   }
 
   const welcomeText = await getWelcomeText();
-  const tierLevel = await db
-    .select()
-    .from(tierLevelsTable)
-    .where(
-      require("drizzle-orm").eq(tierLevelsTable.name, user.tierName)
-    )
-    .then((r: any[]) => r[0]);
+  const basketCount = await db
+    .select({ count: count() })
+    .from(basketsTable)
+    .where(eq(basketsTable.userId, telegramId))
+    .then((r) => r[0]?.count ?? 0);
 
+  const tierEmoji = TIER_EMOJI[user.tierName] ?? "🏅";
   const name = ctx.from!.first_name ?? "Customer";
-  let header =
-    `👋 Hello, <b>${name}</b>!\n` +
+
+  const header =
+    `👋 Hello, <b>${name}</b>!\n\n` +
     `💰 Balance: <b>${formatEur(user.balance)}</b>\n` +
-    `🏆 Tier: <b>${user.tierName}</b>`;
-
-  if (tierLevel && tierLevel.globalDiscountPercent > 0) {
-    header += `\n🎁 <b>${user.tierName} bonus: ${tierLevel.globalDiscountPercent}% off every item!</b>`;
-  }
-
-  header += `\n\n${welcomeText}`;
+    `⭐ Status: <b>${user.tierName}</b> ${tierEmoji}\n` +
+    `🛒 Basket: <b>${basketCount} item(s)</b>\n\n` +
+    `${welcomeText}\n\n` +
+    `⚠️ <b>Note: No refunds.</b>`;
 
   const kb = inlineKeyboard([
-    [{ text: "🛒 Shop", callback_data: "shop:cities" }],
+    [{ text: "🏪 Shop", callback_data: "shop:cities" }],
     [
-      { text: "🛍 My Basket", callback_data: "shop:basket" },
-      { text: "📋 My Orders", callback_data: "shop:orders" },
+      { text: "👤 Profile", callback_data: "shop:profile" },
+      { text: "⭐ Top Up", callback_data: "shop:topup" },
     ],
     [
-      { text: "💰 Top Up Balance", callback_data: "shop:topup" },
-      { text: "⭐ Leave Review", callback_data: "shop:review" },
+      { text: "📝 Reviews", callback_data: "shop:review_prompt" },
+      { text: "📋 Price List", callback_data: "shop:pricelist" },
     ],
   ]);
 
@@ -82,21 +91,136 @@ export async function showHome(ctx: Context & { session: BotSession }) {
   }
 }
 
+export async function showProfile(ctx: Context & { session: BotSession }) {
+  const telegramId = ctx.from!.id;
+  const user = await getUser(telegramId);
+  if (!user) return;
+
+  const tierEmoji = TIER_EMOJI[user.tierName] ?? "🏅";
+
+  const tierLevel = await db
+    .select()
+    .from(tierLevelsTable)
+    .where(eq(tierLevelsTable.name, user.tierName))
+    .then((r) => r[0]);
+
+  const text =
+    `👤 <b>Your Profile</b>\n\n` +
+    `🪪 Username: ${user.username ? `@${user.username}` : "—"}\n` +
+    `🆔 ID: <code>${telegramId}</code>\n` +
+    `💰 Balance: <b>${formatEur(user.balance)}</b>\n` +
+    `⭐ Status: <b>${user.tierName}</b> ${tierEmoji}\n` +
+    `🛒 Total purchases: <b>${user.purchaseCount}</b>\n` +
+    `💸 Total spent: <b>${formatEur(user.eurSpent)}</b>\n` +
+    (tierLevel && tierLevel.globalDiscountPercent > 0
+      ? `🎁 Tier discount: <b>${tierLevel.globalDiscountPercent}%</b> off every item\n`
+      : "") +
+    (user.isReseller ? `👑 Reseller status: <b>Active</b>\n` : "");
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, {
+      parse_mode: "HTML",
+      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+    });
+  } else {
+    await ctx.reply(text, {
+      parse_mode: "HTML",
+      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+    });
+  }
+}
+
+export async function showPriceList(ctx: Context & { session: BotSession }) {
+  const cities = await getCities();
+  if (cities.length === 0) {
+    await ctx.editMessageText("No products available.", {
+      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+    });
+    return;
+  }
+
+  let text = "📋 <b>Price List</b>\n\n";
+
+  for (const city of cities) {
+    const districts = await getDistricts(city.id);
+    let cityHasProducts = false;
+
+    for (const district of districts) {
+      const rows = await db
+        .select({
+          typeName: productTypesTable.name,
+          typeEmoji: productTypesTable.emoji,
+          size: productsTable.size,
+          price: productsTable.price,
+          cnt: count(),
+        })
+        .from(productsTable)
+        .innerJoin(
+          productTypesTable,
+          eq(productsTable.typeId, productTypesTable.id)
+        )
+        .where(
+          and(
+            eq(productsTable.cityId, city.id),
+            eq(productsTable.districtId, district.id),
+            eq(productsTable.status, "available")
+          )
+        )
+        .groupBy(
+          productTypesTable.name,
+          productTypesTable.emoji,
+          productsTable.size,
+          productsTable.price
+        )
+        .orderBy(asc(productTypesTable.name), asc(productsTable.price));
+
+      if (rows.length === 0) continue;
+
+      if (!cityHasProducts) {
+        text += `🏙 <b>${city.name}</b>\n`;
+        cityHasProducts = true;
+      }
+      text += `  🏠 <b>${district.name}</b>:\n`;
+      for (const row of rows) {
+        text += `    • ${row.typeEmoji} ${row.typeName} ${row.size} — ${formatEur(row.price)}\n`;
+      }
+    }
+    if (cityHasProducts) text += "\n";
+  }
+
+  if (text === "📋 <b>Price List</b>\n\n") {
+    text += "No products available right now.";
+  }
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, {
+      parse_mode: "HTML",
+      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+    });
+  } else {
+    await ctx.reply(text, {
+      parse_mode: "HTML",
+      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+    });
+  }
+}
+
 export async function showShopCities(ctx: Context & { session: BotSession }) {
   const cities = await getCities();
   if (cities.length === 0) {
-    await ctx.editMessageText("No products available right now. Check back soon!", {
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
+    await ctx.editMessageText(
+      "No products available right now. Check back soon!",
+      { ...inlineKeyboard([[BACK_BTN("shop:home")]]) }
+    );
     return;
   }
   const kb = inlineKeyboard([
     ...cities.map((c) => [
       { text: `🏙 ${c.name}`, callback_data: `shop:dist:${c.id}` },
     ]),
-    [BACK_BTN("shop:home")],
+    [{ text: "🏠 Home", callback_data: "shop:home" }],
   ]);
-  await ctx.editMessageText("🛒 <b>Select a city:</b>", {
+  await ctx.editMessageText("🏙 <b>Choose a City</b>\n\nSelect your location:", {
     parse_mode: "HTML",
     ...kb,
   });
@@ -112,22 +236,79 @@ export async function showShopDistricts(
     .where(eq(citiesTable.id, cityId))
     .then((r) => r[0]);
   const districts = await getDistricts(cityId);
+
   if (districts.length === 0) {
     await ctx.editMessageText("No districts available in this city.", {
       ...inlineKeyboard([[BACK_BTN("shop:cities")]]),
     });
     return;
   }
+
+  let text = `🏙 <b>${city?.name ?? "?"}</b>\n\n`;
+
+  const districtsWithProducts: typeof districts = [];
+
+  for (const d of districts) {
+    const rows = await db
+      .select({
+        typeName: productTypesTable.name,
+        typeEmoji: productTypesTable.emoji,
+        size: productsTable.size,
+        price: productsTable.price,
+      })
+      .from(productsTable)
+      .innerJoin(
+        productTypesTable,
+        eq(productsTable.typeId, productTypesTable.id)
+      )
+      .where(
+        and(
+          eq(productsTable.cityId, cityId),
+          eq(productsTable.districtId, d.id),
+          eq(productsTable.status, "available")
+        )
+      )
+      .groupBy(
+        productTypesTable.name,
+        productTypesTable.emoji,
+        productsTable.size,
+        productsTable.price
+      )
+      .orderBy(asc(productTypesTable.name), asc(productsTable.price));
+
+    if (rows.length === 0) continue;
+    districtsWithProducts.push(d);
+
+    text += `🏠 <b>${d.name}</b>:\n`;
+    for (const row of rows) {
+      text += `  • ${row.typeEmoji} ${row.typeName} ${row.size} — ${formatEur(row.price)}\n`;
+    }
+    text += "\n";
+  }
+
+  if (districtsWithProducts.length === 0) {
+    await ctx.editMessageText("No products available in this city.", {
+      ...inlineKeyboard([[BACK_BTN("shop:cities")]]),
+    });
+    return;
+  }
+
+  text += "Choose a district:";
+
   const kb = inlineKeyboard([
-    ...districts.map((d) => [
-      { text: `📍 ${d.name}`, callback_data: `shop:types:${cityId}:${d.id}` },
+    ...districtsWithProducts.map((d) => [
+      {
+        text: `🏠 ${d.name}`,
+        callback_data: `shop:types:${cityId}:${d.id}`,
+      },
     ]),
-    [BACK_BTN("shop:cities")],
+    [
+      BACK_BTN("shop:cities"),
+      { text: "🏠 Home", callback_data: "shop:home" },
+    ],
   ]);
-  await ctx.editMessageText(
-    `🏙 <b>${city?.name ?? "?"}</b>\nSelect a district:`,
-    { parse_mode: "HTML", ...kb }
-  );
+
+  await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
 }
 
 export async function showShopTypes(
@@ -137,6 +318,7 @@ export async function showShopTypes(
 ) {
   const types = await getProductTypes();
   const availableTypes: typeof types = [];
+
   for (const t of types) {
     const [cnt] = await db
       .select({ count: count() })
@@ -159,6 +341,11 @@ export async function showShopTypes(
     return;
   }
 
+  if (availableTypes.length === 1) {
+    await showShopSizes(ctx, cityId, districtId, availableTypes[0]!.id);
+    return;
+  }
+
   const kb = inlineKeyboard([
     ...availableTypes.map((t) => [
       {
@@ -166,7 +353,10 @@ export async function showShopTypes(
         callback_data: `shop:sizes:${cityId}:${districtId}:${t.id}`,
       },
     ]),
-    [BACK_BTN(`shop:dist:${cityId}`)],
+    [
+      BACK_BTN(`shop:dist:${cityId}`),
+      { text: "🏠 Home", callback_data: "shop:home" },
+    ],
   ]);
   await ctx.editMessageText("🏷 <b>Select product type:</b>", {
     parse_mode: "HTML",
@@ -184,19 +374,33 @@ export async function showShopSizes(
   const user = await getUser(telegramId);
   if (!user) return;
 
+  const [city, district, type] = await Promise.all([
+    db
+      .select()
+      .from(citiesTable)
+      .where(eq(citiesTable.id, cityId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(districtsTable)
+      .where(eq(districtsTable.id, districtId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(productTypesTable)
+      .where(eq(productTypesTable.id, typeId))
+      .then((r) => r[0]),
+  ]);
+
   const sizes = await getSizesForTypeInDistrict(cityId, districtId, typeId);
   if (sizes.length === 0) {
     await ctx.editMessageText("No products available.", {
-      ...inlineKeyboard([[BACK_BTN(`shop:types:${cityId}:${districtId}`)]]),
+      ...inlineKeyboard([
+        [BACK_BTN(`shop:types:${cityId}:${districtId}`)],
+      ]),
     });
     return;
   }
-
-  const type = await db
-    .select()
-    .from(productTypesTable)
-    .where(eq(productTypesTable.id, typeId))
-    .then((r) => r[0]);
 
   const buttons = await Promise.all(
     sizes.map(async (s) => {
@@ -210,28 +414,122 @@ export async function showShopSizes(
         },
         { isReseller: user.isReseller, tierName: user.tierName }
       );
-      const badges = priceResult.discountBadges.join("");
       const label =
         priceResult.final === priceResult.original
-          ? `${s.size} — ${formatEur(priceResult.final)} (${s.count} left)`
-          : `${s.size} — ${formatEur(priceResult.final)} ~~${formatEur(priceResult.original)}~~ ${badges} (${s.count} left)`;
+          ? `${s.size} ${formatEur(priceResult.final)}`
+          : `${s.size} ${formatEur(priceResult.final)} (was ${formatEur(priceResult.original)}) ${priceResult.discountBadges.join("")}`;
       return [
         {
           text: label,
-          callback_data: `shop:buy:${cityId}:${districtId}:${typeId}:${encodeURIComponent(s.size)}`,
+          callback_data: `shop:detail:${cityId}:${districtId}:${typeId}:${encodeURIComponent(s.size)}`,
         },
       ];
     })
   );
 
+  const header =
+    `🏙 <b>${city?.name ?? "?"}</b>\n` +
+    `🏠 <b>${district?.name ?? "?"}</b>\n` +
+    `${type?.emoji ?? "💎"} <b>${type?.name ?? "?"}</b>\n\n` +
+    `Available options:`;
+
   const kb = inlineKeyboard([
     ...buttons,
-    [BACK_BTN(`shop:types:${cityId}:${districtId}`)],
+    [
+      BACK_BTN(`shop:types:${cityId}:${districtId}`),
+      { text: "🏠 Home", callback_data: "shop:home" },
+    ],
   ]);
-  await ctx.editMessageText(
-    `${type?.emoji ?? ""} <b>${type?.name ?? "Products"}</b>\nSelect size and quantity:`,
-    { parse_mode: "HTML", ...kb }
+  await ctx.editMessageText(header, { parse_mode: "HTML", ...kb });
+}
+
+export async function showSizeDetail(
+  ctx: Context & { session: BotSession },
+  cityId: number,
+  districtId: number,
+  typeId: number,
+  size: string
+) {
+  const telegramId = ctx.from!.id;
+  const user = await getUser(telegramId);
+  if (!user) return;
+
+  const [city, district, type] = await Promise.all([
+    db
+      .select()
+      .from(citiesTable)
+      .where(eq(citiesTable.id, cityId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(districtsTable)
+      .where(eq(districtsTable.id, districtId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(productTypesTable)
+      .where(eq(productTypesTable.id, typeId))
+      .then((r) => r[0]),
+  ]);
+
+  const product = await db
+    .select()
+    .from(productsTable)
+    .where(
+      and(
+        eq(productsTable.cityId, cityId),
+        eq(productsTable.districtId, districtId),
+        eq(productsTable.typeId, typeId),
+        eq(productsTable.size, size),
+        eq(productsTable.status, "available")
+      )
+    )
+    .orderBy(asc(productsTable.price))
+    .limit(1)
+    .then((r) => r[0]);
+
+  if (!product) {
+    await ctx.editMessageText("⚠️ This item is no longer available.", {
+      ...inlineKeyboard([
+        [BACK_BTN(`shop:sizes:${cityId}:${districtId}:${typeId}`)],
+      ]),
+    });
+    return;
+  }
+
+  const priceResult = await calculatePrice(
+    { typeId, cityId, districtId, size, price: Number(product.price) },
+    { isReseller: user.isReseller, tierName: user.tierName }
   );
+
+  let priceText = `💰 Price: <b>${formatEur(priceResult.final)}</b>`;
+  if (priceResult.final !== priceResult.original) {
+    priceText += ` <s>${formatEur(priceResult.original)}</s> ${priceResult.discountBadges.join("")}`;
+  }
+
+  const text =
+    `🏙 <b>${city?.name ?? "?"}</b> | 🏠 <b>${district?.name ?? "?"}</b>\n` +
+    `${type?.emoji ?? "💎"} <b>${type?.name ?? "?"} - ${size}</b>\n` +
+    priceText;
+
+  const kb = inlineKeyboard([
+    [
+      {
+        text: "🛒 Add to Basket",
+        callback_data: `shop:buy:${cityId}:${districtId}:${typeId}:${encodeURIComponent(size)}`,
+      },
+      {
+        text: "💳 Pay Now",
+        callback_data: `shop:paynow:${cityId}:${districtId}:${typeId}:${encodeURIComponent(size)}`,
+      },
+    ],
+    [
+      BACK_BTN(`shop:sizes:${cityId}:${districtId}:${typeId}`),
+      { text: "🏠 Home", callback_data: "shop:home" },
+    ],
+  ]);
+
+  await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
 }
 
 export async function addToBasket(
@@ -274,8 +572,190 @@ export async function addToBasket(
     return;
   }
 
-  await ctx.answerCbQuery(`Added ${size} to basket!`);
-  await showShopSizes(ctx, cityId, districtId, typeId);
+  await ctx.answerCbQuery(`✅ ${size} added to basket!`);
+  await showSizeDetail(ctx, cityId, districtId, typeId, size);
+}
+
+export async function payNow(
+  ctx: Context & { session: BotSession },
+  cityId: number,
+  districtId: number,
+  typeId: number,
+  size: string
+) {
+  const telegramId = ctx.from!.id;
+
+  const product = await db
+    .select()
+    .from(productsTable)
+    .where(
+      and(
+        eq(productsTable.cityId, cityId),
+        eq(productsTable.districtId, districtId),
+        eq(productsTable.typeId, typeId),
+        eq(productsTable.size, size),
+        eq(productsTable.status, "available")
+      )
+    )
+    .orderBy(asc(productsTable.price))
+    .limit(1)
+    .then((r) => r[0]);
+
+  if (!product) {
+    await ctx.answerCbQuery("Sorry, this item is no longer available.", {
+      show_alert: true,
+    });
+    return;
+  }
+
+  const ok = await reserveProduct(product.id, telegramId);
+  if (!ok) {
+    await ctx.answerCbQuery("Could not reserve item. Please try again.", {
+      show_alert: true,
+    });
+    return;
+  }
+
+  ctx.session.data = {
+    paynow: true,
+    productId: product.id,
+    cityId,
+    districtId,
+    typeId,
+    size,
+  };
+
+  await showPaymentSummary(ctx);
+}
+
+export async function showPaymentSummary(
+  ctx: Context & { session: BotSession }
+) {
+  const telegramId = ctx.from!.id;
+  const data = ctx.session.data ?? {};
+  const user = await getUser(telegramId);
+  if (!user) return;
+
+  const cityId = data["cityId"] as number;
+  const districtId = data["districtId"] as number;
+  const typeId = data["typeId"] as number;
+  const size = data["size"] as string;
+  const productId = data["productId"] as number;
+
+  const [city, district, type, product] = await Promise.all([
+    db
+      .select()
+      .from(citiesTable)
+      .where(eq(citiesTable.id, cityId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(districtsTable)
+      .where(eq(districtsTable.id, districtId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(productTypesTable)
+      .where(eq(productTypesTable.id, typeId))
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.id, productId))
+      .then((r) => r[0]),
+  ]);
+
+  if (!product) {
+    await ctx.editMessageText("⚠️ Product no longer available.", {
+      ...inlineKeyboard([
+        [{ text: "🏠 Home", callback_data: "shop:home" }],
+      ]),
+    });
+    return;
+  }
+
+  const priceResult = await calculatePrice(
+    { typeId, cityId, districtId, size, price: Number(product.price) },
+    { isReseller: user.isReseller, tierName: user.tierName }
+  );
+
+  const appliedCode = data["appliedCode"] as string | undefined;
+  let total = priceResult.final;
+
+  if (appliedCode) {
+    const code = await db
+      .select()
+      .from(discountCodesTable)
+      .where(eq(discountCodesTable.code, appliedCode))
+      .then((r) => r[0]);
+    if (code) {
+      total = total * (1 - code.percentOff / 100);
+    }
+  }
+
+  ctx.session.data = { ...data, discountedTotal: total };
+
+  const text =
+    `🧾 <b>Payment Summary</b>\n\n` +
+    `📦 Product: <b>${type?.emoji ?? "💎"} ${type?.name ?? "?"} ${size}</b>\n` +
+    `💰 Price: <b>${formatEur(total)}</b>\n` +
+    `📍 Location: <b>${city?.name ?? "?"}, ${district?.name ?? "?"}</b>\n\n` +
+    (appliedCode ? `🎟 Code <b>${appliedCode}</b> applied!\n\n` : "") +
+    `Do you have a discount code to apply?`;
+
+  const kb = inlineKeyboard([
+    [{ text: "💳 Pay Now", callback_data: "shop:do_paynow" }],
+    [
+      {
+        text: "🎟 Apply Discount Code",
+        callback_data: "shop:apply_code_paynow",
+      },
+    ],
+    [
+      BACK_BTN(
+        `shop:detail:${cityId}:${districtId}:${typeId}:${encodeURIComponent(size)}`
+      ),
+    ],
+  ]);
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+  } else {
+    await ctx.reply(text, { parse_mode: "HTML", ...kb });
+  }
+}
+
+export async function doPayNow(ctx: Context & { session: BotSession }) {
+  const telegramId = ctx.from!.id;
+  const user = await getUser(telegramId);
+  if (!user) return;
+
+  const data = ctx.session.data ?? {};
+  const total = Number(data["discountedTotal"] ?? 0);
+
+  if (Number(user.balance) >= total) {
+    await db
+      .update(usersTable)
+      .set({ balance: (Number(user.balance) - total).toFixed(2) })
+      .where(eq(usersTable.telegramId, telegramId));
+    await completePurchase(ctx, "balance");
+  } else {
+    const kb = inlineKeyboard([
+      [{ text: "💳 Pay with Crypto", callback_data: "pay:menu" }],
+      [
+        {
+          text: "🎟 Apply Discount Code",
+          callback_data: "shop:apply_code_paynow",
+        },
+      ],
+      [BACK_BTN("shop:basket")],
+    ]);
+    await ctx.editMessageText(
+      `⚠️ <b>Insufficient Balance!</b> (${formatEur(user.balance)} / ${formatEur(total)} EUR)\n\n` +
+        `Do you have a discount code to apply before paying with crypto?`,
+      { parse_mode: "HTML", ...kb }
+    );
+  }
 }
 
 export async function showBasket(ctx: Context & { session: BotSession }) {
@@ -287,7 +767,7 @@ export async function showBasket(ctx: Context & { session: BotSession }) {
 
   if (items.length === 0) {
     const kb = inlineKeyboard([
-      [{ text: "🛒 Go Shopping", callback_data: "shop:cities" }],
+      [{ text: "🏪 Go Shopping", callback_data: "shop:cities" }],
       [BACK_BTN("shop:home")],
     ]);
     if (ctx.callbackQuery) {
@@ -300,6 +780,7 @@ export async function showBasket(ctx: Context & { session: BotSession }) {
 
   let total = 0;
   let text = "🛍 <b>Your Basket</b>\n\n";
+
   for (const item of items) {
     const priceResult = await calculatePrice(
       {
@@ -312,10 +793,24 @@ export async function showBasket(ctx: Context & { session: BotSession }) {
       { isReseller: user.isReseller, tierName: user.tierName }
     );
     total += priceResult.final;
-    text += `• ${item.size} — ${formatEur(priceResult.final)}\n`;
+
+    const type = await db
+      .select()
+      .from(productTypesTable)
+      .where(eq(productTypesTable.id, item.typeId))
+      .then((r) => r[0]);
+    const city = await db
+      .select()
+      .from(citiesTable)
+      .where(eq(citiesTable.id, item.cityId))
+      .then((r) => r[0]);
+
+    text += `• ${type?.emoji ?? "💎"} ${type?.name ?? "?"} ${item.size} — ${formatEur(priceResult.final)} (${city?.name ?? "?"})\n`;
   }
-  text += `\n💰 Total: <b>${formatEur(total)}</b>\n`;
-  text += `💳 Your balance: <b>${formatEur(user.balance)}</b>`;
+
+  text +=
+    `\n💰 Total: <b>${formatEur(total)}</b>\n` +
+    `💳 Your balance: <b>${formatEur(user.balance)}</b>`;
 
   const kb = inlineKeyboard([
     [{ text: "✅ Checkout", callback_data: "shop:checkout" }],
@@ -342,7 +837,6 @@ export async function checkout(ctx: Context & { session: BotSession }) {
   }
 
   let total = 0;
-  const priceResults = [];
   for (const item of items) {
     const priceResult = await calculatePrice(
       {
@@ -355,93 +849,102 @@ export async function checkout(ctx: Context & { session: BotSession }) {
       { isReseller: user.isReseller, tierName: user.tierName }
     );
     total += priceResult.final;
-    priceResults.push({ item, priceResult });
   }
 
-  if (Number(user.balance) < total) {
-    await ctx.answerCbQuery(
-      `Insufficient balance. You need ${formatEur(total)} but have ${formatEur(user.balance)}.`,
-      { show_alert: true }
+  const appliedCode = ctx.session.data?.["appliedCode"] as string | undefined;
+  let discountedTotal = total;
+
+  if (appliedCode) {
+    const code = await db
+      .select()
+      .from(discountCodesTable)
+      .where(eq(discountCodesTable.code, appliedCode))
+      .then((r) => r[0]);
+    if (code) {
+      discountedTotal = total * (1 - code.percentOff / 100);
+    }
+  }
+
+  ctx.session.data = {
+    ...(ctx.session.data ?? {}),
+    discountedTotal,
+    pendingEur: discountedTotal,
+  };
+
+  if (Number(user.balance) >= discountedTotal) {
+    await db
+      .update(usersTable)
+      .set({
+        balance: (Number(user.balance) - discountedTotal).toFixed(2),
+      })
+      .where(eq(usersTable.telegramId, telegramId));
+    await completePurchase(ctx, "balance");
+  } else {
+    const kb = inlineKeyboard([
+      [{ text: "💳 Pay with Crypto", callback_data: "pay:menu" }],
+      [
+        {
+          text: "🎟 Apply Discount Code",
+          callback_data: "shop:apply_code_basket",
+        },
+      ],
+      [BACK_BTN("shop:basket")],
+    ]);
+    await ctx.editMessageText(
+      `⚠️ <b>Insufficient Balance!</b> (${formatEur(user.balance)} / ${formatEur(discountedTotal)} EUR)\n\n` +
+        `Do you have a discount code to apply before paying with crypto?`,
+      { parse_mode: "HTML", ...kb }
     );
+  }
+}
+
+export async function applyDiscountCode(
+  ctx: Context & { session: BotSession },
+  code: string,
+  returnTo: "paynow" | "basket"
+) {
+  const discountRecord = await db
+    .select()
+    .from(discountCodesTable)
+    .where(eq(discountCodesTable.code, code.toUpperCase().trim()))
+    .then((r) => r[0]);
+
+  if (!discountRecord) {
+    await ctx.reply("❌ Invalid discount code. Please try again:");
     return;
   }
 
-  const newBalance = Number(user.balance) - total;
-  await db
-    .update(usersTable)
-    .set({
-      balance: newBalance.toFixed(2),
-      purchaseCount: user.purchaseCount + items.length,
-      eurSpent: (Number(user.eurSpent) + total).toFixed(2),
-    })
-    .where(eq(usersTable.telegramId, telegramId));
-
-  const queueIds: string[] = [];
-  for (const { item, priceResult } of priceResults) {
-    const queueId = generateQueueId();
-    queueIds.push(queueId);
-    await db
-      .update(productsTable)
-      .set({ status: "sold" })
-      .where(eq(productsTable.id, item.productId));
-    await db.insert(purchasesTable).values({
-      queueId,
-      userId: telegramId,
-      productId: item.productId,
-      pricePaid: priceResult.final.toFixed(2),
-      paymentMethod: "balance",
-    });
-    await db.delete(basketsTable).where(eq(basketsTable.id, item.basketId));
+  if (
+    discountRecord.maxUses !== null &&
+    discountRecord.usesCount >= discountRecord.maxUses
+  ) {
+    await ctx.reply("❌ This discount code has been fully used.");
+    ctx.session.step = undefined;
+    return;
   }
 
-  await updateUserTier(telegramId);
+  ctx.session.data = {
+    ...(ctx.session.data ?? {}),
+    appliedCode: discountRecord.code,
+  };
+  ctx.session.step = undefined;
 
-  let msg = `✅ <b>Purchase Successful!</b>\n\n`;
-  msg += `Paid: <b>${formatEur(total)}</b>\n`;
-  msg += `Remaining balance: <b>${formatEur(newBalance)}</b>\n\n`;
-  msg += `<b>Your items:</b>\n`;
+  await ctx.reply(
+    `✅ Discount code <b>${discountRecord.code}</b> applied! (${discountRecord.percentOff}% off)`,
+    { parse_mode: "HTML" }
+  );
 
-  for (const { item } of priceResults) {
-    const product = await db
-      .select()
-      .from(productsTable)
-      .where(eq(productsTable.id, item.productId))
-      .then((r) => r[0]);
-    if (!product) continue;
-    msg += `📦 <b>${item.size}</b>\n`;
-    if (product.fileType === "text" && product.content) {
-      msg += `<code>${product.content}</code>\n\n`;
-    }
+  if (returnTo === "paynow") {
+    await showPaymentSummary(ctx);
+  } else {
+    await checkout(ctx);
   }
-
-  await ctx.editMessageText(msg, { parse_mode: "HTML" });
-
-  for (const { item } of priceResults) {
-    const product = await db
-      .select()
-      .from(productsTable)
-      .where(eq(productsTable.id, item.productId))
-      .then((r) => r[0]);
-    if (!product) continue;
-    if (product.fileType !== "text" && product.fileId) {
-      if (product.fileType === "photo") {
-        await ctx.replyWithPhoto(product.fileId, { caption: `Your ${item.size}` });
-      } else if (product.fileType === "document") {
-        await ctx.replyWithDocument(product.fileId, { caption: `Your ${item.size}` });
-      } else if (product.fileType === "video") {
-        await ctx.replyWithVideo(product.fileId, { caption: `Your ${item.size}` });
-      } else if (product.fileType === "animation" || product.fileType === "gif") {
-        await ctx.replyWithAnimation(product.fileId, { caption: `Your ${item.size}` });
-      }
-    }
-  }
-
-  await ctx.reply("Thank you for your purchase!", {
-    ...inlineKeyboard([[{ text: "🏠 Home", callback_data: "shop:home" }]]),
-  });
 }
 
-export async function showOrders(ctx: Context & { session: BotSession }, page = 0) {
+export async function showOrders(
+  ctx: Context & { session: BotSession },
+  page = 0
+) {
   const telegramId = ctx.from!.id;
   const PAGE_SIZE = 10;
   const purchases = await db
@@ -465,13 +968,15 @@ export async function showOrders(ctx: Context & { session: BotSession }, page = 
     for (const p of purchases) {
       text +=
         `• <code>${p.queueId}</code> — ${formatEur(p.pricePaid)} — ${formatDate(p.createdAt)}` +
-        `${p.refunded ? " ↩" : ""}\n`;
+        `${p.refunded ? " ↩ refunded" : ""}\n`;
     }
   }
 
   const navRow: { text: string; callback_data: string }[] = [];
-  if (page > 0) navRow.push({ text: "« Prev", callback_data: `shop:orders:${page - 1}` });
-  if ((page + 1) * PAGE_SIZE < total) navRow.push({ text: "Next »", callback_data: `shop:orders:${page + 1}` });
+  if (page > 0)
+    navRow.push({ text: "« Prev", callback_data: `shop:orders:${page - 1}` });
+  if ((page + 1) * PAGE_SIZE < total)
+    navRow.push({ text: "Next »", callback_data: `shop:orders:${page + 1}` });
 
   const kb = inlineKeyboard([
     ...(navRow.length ? [navRow] : []),
@@ -488,11 +993,14 @@ export async function showOrders(ctx: Context & { session: BotSession }, page = 
 export async function showTopUp(ctx: Context & { session: BotSession }) {
   const telegramId = ctx.from!.id;
   const user = await getUser(telegramId);
+
   const text =
     `💰 <b>Top Up Balance</b>\n\n` +
     `Current balance: <b>${formatEur(user?.balance ?? 0)}</b>\n\n` +
-    `To add funds to your account, please contact the shop admin.\n` +
-    `Minimum top-up: €5.00`;
+    `To add funds, pay with crypto:\n\n` +
+    `◎ <b>Solana (SOL)</b> wallet:\n<code>HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59</code>\n\n` +
+    `Send any amount and contact admin with your Telegram ID (<code>${telegramId}</code>) for manual top-up confirmation.`;
+
   if (ctx.callbackQuery) {
     await ctx.editMessageText(text, {
       parse_mode: "HTML",

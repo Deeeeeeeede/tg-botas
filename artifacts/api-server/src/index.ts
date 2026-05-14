@@ -1,3 +1,22 @@
+// Patch abort-controller's AbortSignal so node-fetch@2 accepts native Node.js AbortSignal instances
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { AbortSignal: ACAbortSignal } = require("abort-controller") as {
+    AbortSignal: { [Symbol.hasInstance]: unknown };
+  };
+  Object.defineProperty(ACAbortSignal, Symbol.hasInstance, {
+    configurable: true,
+    value(instance: unknown) {
+      if (instance == null) return false;
+      const i = instance as Record<string, unknown>;
+      return (
+        typeof i["aborted"] === "boolean" &&
+        typeof i["addEventListener"] === "function"
+      );
+    },
+  });
+} catch {}
+
 import app from "./app";
 import { logger } from "./lib/logger";
 import { createBot } from "./bot";

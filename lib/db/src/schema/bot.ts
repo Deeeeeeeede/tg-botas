@@ -87,6 +87,7 @@ export const productsTable = pgTable("bot_products", {
   reservedUntil: timestamp("reserved_until"),
   addedBy: bigint("added_by", { mode: "number" }),
   workerTag: text("worker_tag"),
+  mediaFiles: text("media_files"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

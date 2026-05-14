@@ -784,7 +784,8 @@ export function createBot(): Telegraf {
       ctx.session.data = { ...data, currentProductId: inserted?.id };
       ctx.session.step = "admin:add_product:more_files";
       await ctx.reply(
-        "✅ File saved! Send more files to add to this lot, or /done to finish.",
+        "✅ File saved! Send more files to add to this lot, or press Done to finish.",
+        inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
       );
     } else if (
       (step === "admin:add_product:more_files" ||
@@ -810,12 +811,14 @@ export function createBot(): Telegraf {
           .set({ mediaFiles: JSON.stringify(existing) })
           .where(eq(productsTable.id, currentProductId));
       }
+      const newFileCount = ((data["fileCount"] as number) ?? 1) + 1;
       await ctx.reply(
-        `✅ File ${((data["fileCount"] as number) ?? 1) + 1} added to lot. Send more or /done to finish.`,
+        `✅ File ${newFileCount} added to lot. Send more or press Done to finish.`,
+        inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
       );
       ctx.session.data = {
         ...data,
-        fileCount: ((data["fileCount"] as number) ?? 1) + 1,
+        fileCount: newFileCount,
       };
     } else if (step === "admin:add_product:bulk") {
       const [inserted] = await db
@@ -844,7 +847,8 @@ export function createBot(): Telegraf {
       const bulkCount = ((data["bulkCount"] as number) ?? 0) + 1;
       ctx.session.data = { ...data, bulkCount };
       await ctx.reply(
-        `✅ Unit ${bulkCount} added. Send another file or /done to finish bulk upload.`,
+        `✅ Unit ${bulkCount} added. Send another file or press Done to finish.`,
+        inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
       );
     }
   }
@@ -1574,7 +1578,7 @@ export function createBot(): Telegraf {
           return ctx.editMessageText(
             "📤 Send photos/files for this lot.\n\n" +
               "All files you send will go to ONE buyer.\n" +
-              "Type /done when finished.",
+              "Press ✅ Done when finished.",
             {
               ...inlineKeyboard([
                 [
@@ -1595,6 +1599,31 @@ export function createBot(): Telegraf {
             .where(eq(productsTable.id, parseInt(parts[1]!)));
           await ctx.answerCbQuery("Upload deleted.");
           return showKladMyUploads(ctx, ctx.from.id);
+        }
+        if (sub === "done") {
+          const step = ctx.session.step as string | undefined;
+          const sessionData = (ctx.session.data ?? {}) as Record<string, any>;
+          ctx.session.step = undefined;
+          ctx.session.data = undefined;
+          if (
+            step === "admin:add_product:more_files" ||
+            step === "admin:add_product:content"
+          ) {
+            const fileCount = ((sessionData["fileCount"] as number) ?? 1);
+            await ctx.answerCbQuery("Upload complete!");
+            await ctx.reply(`✅ Lot complete. ${fileCount} file(s) saved — upload closed.`);
+          } else if (step === "admin:add_product:bulk") {
+            const count = (sessionData["bulkCount"] as number) ?? 0;
+            await ctx.answerCbQuery("Upload complete!");
+            await ctx.reply(`✅ Bulk upload complete. ${count} units added — upload closed.`);
+          } else {
+            await ctx.answerCbQuery("Nothing to finish.");
+          }
+          if (await isAdmin(ctx.from.id)) {
+            return showProductsMenu(ctx);
+          } else {
+            return showKladMenu(ctx);
+          }
         }
         return;
       }

@@ -34,6 +34,12 @@ import {
 } from "./db";
 import { showAdminMenu } from "./handlers/admin";
 import {
+  showTopUpMenu,
+  handleTopUpAmount,
+  checkTopUpPayment,
+  cancelTopUp,
+} from "./handlers/topup";
+import {
   showGeographyMenu,
   showCitiesList,
   showCityDetail,
@@ -126,7 +132,6 @@ import {
   checkout,
   applyDiscountCode,
   showOrders,
-  showTopUp,
 } from "./handlers/shop";
 import {
   showCryptoMenu,
@@ -688,6 +693,11 @@ export function createBot(): Telegraf {
     ) {
       const returnTo = step === "shop:apply_code_paynow" ? "paynow" : "basket";
       await applyDiscountCode(ctx, text, returnTo);
+      return;
+    }
+
+    if (step === "topup:enter_amount") {
+      await handleTopUpAmount(ctx, text);
       return;
     }
 
@@ -1486,7 +1496,7 @@ export function createBot(): Telegraf {
           const page = parseInt(parts[1] ?? "0");
           return showOrders(ctx, page);
         }
-        if (sub === "topup") return showTopUp(ctx);
+        if (sub === "topup") return showTopUpMenu(ctx);
         if (sub === "review_prompt") {
           ctx.session.step = "shop:review";
           return ctx.editMessageText("⭐ Write your review:");
@@ -1516,6 +1526,14 @@ export function createBot(): Telegraf {
           ctx.session.data = undefined;
           return showHome(ctx);
         }
+        return;
+      }
+
+      if (action === "topup") {
+        const sub = parts[0];
+        if (sub === "start") return showTopUpMenu(ctx);
+        if (sub === "check") return checkTopUpPayment(ctx);
+        if (sub === "cancel") return cancelTopUp(ctx);
         return;
       }
 

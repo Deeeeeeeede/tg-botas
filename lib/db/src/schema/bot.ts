@@ -198,3 +198,14 @@ export const backupTokensTable = pgTable("bot_backup_tokens", {
   isActive: boolean("is_active").notNull().default(false),
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
+
+export const topupInvoicesTable = pgTable("bot_topup_invoices", {
+  id: serial("id").primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull(),
+  eurAmount: numeric("eur_amount", { precision: 10, scale: 2 }).notNull(),
+  solAmount: numeric("sol_amount", { precision: 18, scale: 9 }).notNull(),
+  status: text("status").notNull().default("pending"),
+  txSignature: text("tx_signature"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+});

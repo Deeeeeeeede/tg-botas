@@ -32,7 +32,6 @@ import {
   ne,
   isNull,
 } from "drizzle-orm";
-import { addMinutes } from "./utils";
 
 export async function getOrCreateUser(
   telegramId: number,
@@ -191,88 +190,69 @@ export async function getSizesForTypeInDistrict(
   return rows;
 }
 
-export async function reserveProduct(
-  productId: number,
-  userId: number
-): Promise<boolean> {
-  const product = await db
+export async function addToBasket(
+  userId: number,
+  cityId: number,
+  districtId: number,
+  typeId: number,
+  size: string,
+  price: number
+): Promise<{ ok: boolean; reason?: string }> {
+  const existing = await db
     .select()
-    .from(productsTable)
+    .from(basketsTable)
     .where(
       and(
-        eq(productsTable.id, productId),
-        eq(productsTable.status, "available")
+        eq(basketsTable.userId, userId),
+        eq(basketsTable.cityId, cityId),
+        eq(basketsTable.districtId, districtId),
+        eq(basketsTable.typeId, typeId),
+        eq(basketsTable.size, size)
       )
     )
     .then((r) => r[0]);
-  if (!product) return false;
+  if (existing) return { ok: false, reason: "already" };
 
   const basketCount = await db
     .select({ count: count() })
     .from(basketsTable)
     .where(eq(basketsTable.userId, userId))
     .then((r) => r[0]?.count ?? 0);
-  if (basketCount >= 10) return false;
+  if (basketCount >= 10) return { ok: false, reason: "full" };
 
-  const until = addMinutes(new Date(), 15);
-  await db
-    .update(productsTable)
-    .set({ status: "reserved", reservedBy: userId, reservedUntil: until })
-    .where(eq(productsTable.id, productId));
-  await db
-    .insert(basketsTable)
-    .values({ userId, productId, reservedUntil: until })
-    .onConflictDoNothing();
-  return true;
+  const [available] = await db
+    .select({ count: count() })
+    .from(productsTable)
+    .where(
+      and(
+        eq(productsTable.cityId, cityId),
+        eq(productsTable.districtId, districtId),
+        eq(productsTable.typeId, typeId),
+        eq(productsTable.size, size),
+        eq(productsTable.status, "available")
+      )
+    );
+  if ((available?.count ?? 0) === 0) return { ok: false, reason: "unavailable" };
+
+  await db.insert(basketsTable).values({
+    userId,
+    cityId,
+    districtId,
+    typeId,
+    size,
+    price: price.toFixed(2),
+  });
+  return { ok: true };
 }
 
 export async function releaseBasket(userId: number) {
-  const items = await db
-    .select()
-    .from(basketsTable)
-    .where(eq(basketsTable.userId, userId));
-  for (const item of items) {
-    await db
-      .update(productsTable)
-      .set({ status: "available", reservedBy: null, reservedUntil: null })
-      .where(eq(productsTable.id, item.productId));
-  }
   await db.delete(basketsTable).where(eq(basketsTable.userId, userId));
 }
 
 export async function getUserBasket(userId: number) {
-  const now = new Date();
-  const expiredItems = await db
+  return db
     .select()
     .from(basketsTable)
-    .where(
-      and(
-        eq(basketsTable.userId, userId),
-        lt(basketsTable.reservedUntil, now)
-      )
-    );
-  for (const item of expiredItems) {
-    await db
-      .update(productsTable)
-      .set({ status: "available", reservedBy: null, reservedUntil: null })
-      .where(eq(productsTable.id, item.productId));
-    await db
-      .delete(basketsTable)
-      .where(eq(basketsTable.id, item.id));
-  }
-  return db
-    .select({
-      basketId: basketsTable.id,
-      productId: productsTable.id,
-      size: productsTable.size,
-      price: productsTable.price,
-      typeId: productsTable.typeId,
-      cityId: productsTable.cityId,
-      districtId: productsTable.districtId,
-      reservedUntil: basketsTable.reservedUntil,
-    })
-    .from(basketsTable)
-    .innerJoin(productsTable, eq(basketsTable.productId, productsTable.id))
     .where(eq(basketsTable.userId, userId));
 }
 
@@ -332,19 +312,12 @@ export async function getDashboardStats() {
 }
 
 export async function clearExpiredReservations() {
-  const now = new Date();
-  const expired = await db
-    .select()
-    .from(basketsTable)
-    .where(lt(basketsTable.reservedUntil, now));
-  for (const item of expired) {
-    await db
-      .update(productsTable)
-      .set({ status: "available", reservedBy: null, reservedUntil: null })
-      .where(eq(productsTable.id, item.productId));
-  }
-  await db.delete(basketsTable).where(lt(basketsTable.reservedUntil, now));
-  return expired.length;
+  const result = await db
+    .update(productsTable)
+    .set({ status: "available", reservedBy: null, reservedUntil: null })
+    .where(eq(productsTable.status, "reserved"))
+    .returning({ id: productsTable.id });
+  return result.length;
 }
 
 export async function searchUser(query: string) {

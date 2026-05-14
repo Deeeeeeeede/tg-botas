@@ -11,6 +11,7 @@ import {
   districtsTable,
   tierLevelsTable,
   discountCodesTable,
+  reviewsTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, count } from "drizzle-orm";
 import {
@@ -19,7 +20,7 @@ import {
   getProductTypes,
   getSizesForTypeInDistrict,
   getWelcomeText,
-  reserveProduct,
+  addToBasket as dbAddToBasket,
   releaseBasket,
   getUserBasket,
   updateUserTier,
@@ -79,9 +80,10 @@ export async function showHome(ctx: Context & { session: BotSession }) {
       { text: "⭐ Top Up", callback_data: "shop:topup" },
     ],
     [
-      { text: "📝 Reviews", callback_data: "shop:review_prompt" },
-      { text: "📋 Price List", callback_data: "shop:pricelist" },
+      { text: "👁 View Reviews", callback_data: "shop:view_reviews" },
+      { text: "📝 Leave a Review", callback_data: "shop:review_prompt" },
     ],
+    [{ text: "📋 Price List", callback_data: "shop:pricelist" }],
   ]);
 
   if (ctx.callbackQuery) {
@@ -117,16 +119,18 @@ export async function showProfile(ctx: Context & { session: BotSession }) {
       : "") +
     (user.isReseller ? `👑 Reseller status: <b>Active</b>\n` : "");
 
+  const profileKb = inlineKeyboard([
+    [
+      { text: "🛒 My Basket", callback_data: "shop:basket" },
+      { text: "📋 My Orders", callback_data: "shop:orders:0" },
+    ],
+    [BACK_BTN("shop:home")],
+  ]);
+
   if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
+    await ctx.editMessageText(text, { parse_mode: "HTML", ...profileKb });
   } else {
-    await ctx.reply(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
+    await ctx.reply(text, { parse_mode: "HTML", ...profileKb });
   }
 }
 
@@ -585,12 +589,22 @@ export async function addToBasket(
     return;
   }
 
-  const ok = await reserveProduct(product.id, telegramId);
-  if (!ok) {
-    await ctx.answerCbQuery(
-      "Could not add to basket. Basket may be full (max 10 items).",
-      { show_alert: true }
-    );
+  const result = await dbAddToBasket(
+    telegramId,
+    cityId,
+    districtId,
+    typeId,
+    size,
+    Number(product.price)
+  );
+  if (!result.ok) {
+    const msg =
+      result.reason === "already"
+        ? "Already in your basket!"
+        : result.reason === "full"
+          ? "Basket is full (max 10 items)."
+          : "Item no longer available.";
+    await ctx.answerCbQuery(msg, { show_alert: true });
     return;
   }
 
@@ -630,17 +644,8 @@ export async function payNow(
     return;
   }
 
-  const ok = await reserveProduct(product.id, telegramId);
-  if (!ok) {
-    await ctx.answerCbQuery("Could not reserve item. Please try again.", {
-      show_alert: true,
-    });
-    return;
-  }
-
   ctx.session.data = {
     paynow: true,
-    productId: product.id,
     cityId,
     districtId,
     typeId,
@@ -662,7 +667,6 @@ export async function showPaymentSummary(
   const districtId = data["districtId"] as number;
   const typeId = data["typeId"] as number;
   const size = data["size"] as string;
-  const productId = data["productId"] as number;
 
   const [city, district, type, product] = await Promise.all([
     db
@@ -683,12 +687,22 @@ export async function showPaymentSummary(
     db
       .select()
       .from(productsTable)
-      .where(eq(productsTable.id, productId))
+      .where(
+        and(
+          eq(productsTable.cityId, cityId),
+          eq(productsTable.districtId, districtId),
+          eq(productsTable.typeId, typeId),
+          eq(productsTable.size, size),
+          eq(productsTable.status, "available")
+        )
+      )
+      .orderBy(asc(productsTable.price))
+      .limit(1)
       .then((r) => r[0]),
   ]);
 
   if (!product) {
-    await ctx.editMessageText("⚠️ Product no longer available.", {
+    await ctx.editMessageText("⚠️ This item is no longer available.", {
       ...inlineKeyboard([
         [{ text: "🏠 Home", callback_data: "shop:home" }],
       ]),
@@ -1033,5 +1047,54 @@ export async function showTopUp(ctx: Context & { session: BotSession }) {
       parse_mode: "HTML",
       ...inlineKeyboard([[BACK_BTN("shop:home")]]),
     });
+  }
+}
+
+export async function showCustomerReviews(
+  ctx: Context & { session: BotSession }
+) {
+  const reviews = await db
+    .select({
+      id: reviewsTable.id,
+      text: reviewsTable.text,
+      stars: reviewsTable.stars,
+      createdAt: reviewsTable.createdAt,
+      username: usersTable.username,
+    })
+    .from(reviewsTable)
+    .leftJoin(usersTable, eq(reviewsTable.userId, usersTable.telegramId))
+    .orderBy(desc(reviewsTable.createdAt))
+    .limit(20);
+
+  if (reviews.length === 0) {
+    const msg = "📭 No reviews yet. Be the first to leave one!";
+    const kb = inlineKeyboard([
+      [{ text: "📝 Leave a Review", callback_data: "shop:review_prompt" }],
+      [BACK_BTN("shop:home")],
+    ]);
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, kb);
+    } else {
+      await ctx.reply(msg, kb);
+    }
+    return;
+  }
+
+  let text = `👁 <b>Customer Reviews</b>\n\n`;
+  for (const r of reviews) {
+    const stars = "⭐".repeat(Math.min(Math.max(r.stars ?? 5, 1), 5));
+    const who = r.username ? `@${r.username}` : "Customer";
+    text += `${stars} <b>${who}</b>\n${r.text}\n\n`;
+  }
+
+  const kb = inlineKeyboard([
+    [{ text: "📝 Leave a Review", callback_data: "shop:review_prompt" }],
+    [BACK_BTN("shop:home")],
+  ]);
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+  } else {
+    await ctx.reply(text, { parse_mode: "HTML", ...kb });
   }
 }

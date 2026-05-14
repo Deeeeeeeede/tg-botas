@@ -106,8 +106,11 @@ export const purchasesTable = pgTable("bot_purchases", {
 export const basketsTable = pgTable("bot_baskets", {
   id: serial("id").primaryKey(),
   userId: bigint("user_id", { mode: "number" }).notNull(),
-  productId: integer("product_id").notNull().unique(),
-  reservedUntil: timestamp("reserved_until").notNull(),
+  cityId: integer("city_id").notNull(),
+  districtId: integer("district_id").notNull(),
+  typeId: integer("type_id").notNull(),
+  size: text("size").notNull(),
+  price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

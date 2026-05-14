@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { formatEur, generateQueueId, addMinutes, formatDate } from "../utils";
-import { getUser, getUserBasket, updateUserTier } from "../db";
+import { getUser, getUserBasket, releaseBasket, updateUserTier } from "../db";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
 
 export const SOL_WALLET = "HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59";
@@ -237,11 +237,109 @@ export async function completePurchase(
   const user = await getUser(telegramId);
   if (!user) return;
 
-  const items = await getUserBasket(telegramId);
-  if (items.length === 0) {
+  const data = ctx.session.data ?? {};
+  const isPaynow = Boolean(data["paynow"]);
+  const discountCode = data["appliedCode"] as string | undefined;
+  const discountedTotal = Number(data["discountedTotal"] ?? 0);
+
+  type Spec = {
+    cityId: number;
+    districtId: number;
+    typeId: number;
+    size: string;
+    price: number;
+  };
+
+  let specs: Spec[];
+
+  if (isPaynow) {
+    specs = [
+      {
+        cityId: data["cityId"] as number,
+        districtId: data["districtId"] as number,
+        typeId: data["typeId"] as number,
+        size: data["size"] as string,
+        price: discountedTotal,
+      },
+    ];
+  } else {
+    const basketItems = await getUserBasket(telegramId);
+    if (basketItems.length === 0) {
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(
+          "⚠️ Basket is empty. Please add items and try again.",
+          {
+            ...inlineKeyboard([
+              [{ text: "🏠 Home", callback_data: "shop:home" }],
+            ]),
+          },
+        );
+      }
+      return;
+    }
+    const perItemPrice =
+      discountedTotal > 0 ? discountedTotal / basketItems.length : 0;
+    specs = basketItems.map((it) => ({
+      cityId: it.cityId,
+      districtId: it.districtId,
+      typeId: it.typeId,
+      size: it.size,
+      price: perItemPrice > 0 ? perItemPrice : Number(it.price),
+    }));
+  }
+
+  const purchased: { productId: number; size: string; queueId: string; pricePaid: number }[] = [];
+  let unpurchasedRefund = 0;
+
+  for (const spec of specs) {
+    const result = await db.execute(sql`
+      UPDATE bot_products
+      SET status = 'sold', reserved_by = NULL, reserved_until = NULL
+      WHERE id = (
+        SELECT id FROM bot_products
+        WHERE city_id = ${spec.cityId}
+          AND district_id = ${spec.districtId}
+          AND type_id = ${spec.typeId}
+          AND size = ${spec.size}
+          AND status = 'available'
+        ORDER BY created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, size
+    `);
+    const row = result.rows[0] as { id: number; size: string } | undefined;
+    if (!row) {
+      unpurchasedRefund += spec.price;
+      continue;
+    }
+    const queueId = generateQueueId();
+    await db.insert(purchasesTable).values({
+      queueId,
+      userId: telegramId,
+      productId: row.id,
+      pricePaid: spec.price.toFixed(2),
+      discountCodeUsed: discountCode,
+      paymentMethod,
+    });
+    purchased.push({ productId: row.id, size: row.size, queueId, pricePaid: spec.price });
+  }
+
+  if (purchased.length === 0) {
+    const refundTotal = discountedTotal + overpayEur;
+    if (refundTotal > 0) {
+      const freshUser = await getUser(telegramId);
+      await db
+        .update(usersTable)
+        .set({ balance: (Number(freshUser!.balance) + refundTotal).toFixed(2) })
+        .where(eq(usersTable.telegramId, telegramId));
+    }
+    ctx.session.step = undefined;
+    ctx.session.data = undefined;
+    if (!isPaynow) await releaseBasket(telegramId);
     if (ctx.callbackQuery) {
       await ctx.editMessageText(
-        "⚠️ Basket is empty or your reservation expired. Please try again.",
+        "⚠️ Sorry, all items went out of stock just now. Your balance has been refunded.",
         {
           ...inlineKeyboard([
             [{ text: "🏠 Home", callback_data: "shop:home" }],
@@ -252,10 +350,7 @@ export async function completePurchase(
     return;
   }
 
-  const discountCode = ctx.session.data?.["appliedCode"] as string | undefined;
-  const discountedTotal = Number(ctx.session.data?.["discountedTotal"] ?? 0);
-  const originalTotal = items.reduce((s, it) => s + Number(it.price), 0);
-  const total = discountedTotal > 0 ? discountedTotal : originalTotal;
+  if (!isPaynow) await releaseBasket(telegramId);
 
   if (discountCode) {
     await db
@@ -265,42 +360,21 @@ export async function completePurchase(
       .catch(() => {});
   }
 
-  if (overpayEur > 0) {
+  const totalCredit = overpayEur + unpurchasedRefund;
+  if (totalCredit > 0) {
+    const freshUser = await getUser(telegramId);
     await db
       .update(usersTable)
-      .set({
-        balance: (Number(user.balance) + overpayEur).toFixed(2),
-      })
+      .set({ balance: (Number(freshUser!.balance) + totalCredit).toFixed(2) })
       .where(eq(usersTable.telegramId, telegramId));
   }
 
-  const purchaseRecords: { item: (typeof items)[number]; queueId: string }[] =
-    [];
-  const perItemPrice = (total / items.length).toFixed(2);
-
-  for (const item of items) {
-    const queueId = generateQueueId();
-    await db
-      .update(productsTable)
-      .set({ status: "sold" })
-      .where(eq(productsTable.id, item.productId));
-    await db.insert(purchasesTable).values({
-      queueId,
-      userId: telegramId,
-      productId: item.productId,
-      pricePaid: perItemPrice,
-      discountCodeUsed: discountCode,
-      paymentMethod,
-    });
-    await db.delete(basketsTable).where(eq(basketsTable.id, item.basketId));
-    purchaseRecords.push({ item, queueId });
-  }
-
+  const totalPaid = purchased.reduce((s, p) => s + p.pricePaid, 0);
   await db
     .update(usersTable)
     .set({
-      purchaseCount: user.purchaseCount + items.length,
-      eurSpent: (Number(user.eurSpent) + total).toFixed(2),
+      purchaseCount: user.purchaseCount + purchased.length,
+      eurSpent: (Number(user.eurSpent) + totalPaid).toFixed(2),
     })
     .where(eq(usersTable.telegramId, telegramId));
 
@@ -311,20 +385,22 @@ export async function completePurchase(
 
   let msg =
     `✅ <b>Purchase Successful!</b>\n\n` +
-    `Total paid: <b>${formatEur(total)}</b>\n`;
+    `Total paid: <b>${formatEur(totalPaid)}</b>\n`;
   if (overpayEur > 0)
     msg += `💰 Overpay credited: <b>${formatEur(overpayEur)}</b>\n`;
+  if (unpurchasedRefund > 0)
+    msg += `↩ Out-of-stock refund: <b>${formatEur(unpurchasedRefund)}</b>\n`;
   msg += `\n<b>Your items:</b>\n`;
 
   const productsToDeliver: any[] = [];
-  for (const { item, queueId } of purchaseRecords) {
+  for (const { productId, size, queueId } of purchased) {
     const product = await db
       .select()
       .from(productsTable)
-      .where(eq(productsTable.id, item.productId))
+      .where(eq(productsTable.id, productId))
       .then((r) => r[0]);
     if (!product) continue;
-    msg += `\n📦 <b>${item.size}</b> — <code>${queueId}</code>\n`;
+    msg += `\n📦 <b>${size}</b> — <code>${queueId}</code>\n`;
     if (product.fileType === "text" && product.content) {
       msg += `<code>${product.content}</code>\n`;
     }

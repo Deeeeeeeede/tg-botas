@@ -132,6 +132,7 @@ import {
   checkout,
   applyDiscountCode,
   showOrders,
+  showCustomerReviews,
 } from "./handlers/shop";
 import {
   showCryptoMenu,
@@ -1500,6 +1501,9 @@ export function createBot(): Telegraf {
         if (sub === "review_prompt") {
           ctx.session.step = "shop:review";
           return ctx.editMessageText("⭐ Write your review:");
+        }
+        if (sub === "view_reviews") {
+          return showCustomerReviews(ctx);
         }
         return;
       }

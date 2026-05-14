@@ -26,9 +26,3 @@ externalPort = 80
 [[ports]]
 localPort = 8081
 externalPort = 8081
-
-[userenv]
-
-[userenv.shared]
-BOT_TOKEN = "7940475199:AAFq-EHPQZFz77UFS9O2YFXPrdhu2g8NpyA"
-OWNER_ID = "8725051269"

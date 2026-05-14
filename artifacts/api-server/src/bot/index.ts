@@ -149,7 +149,7 @@ export function createBot(): Telegraf {
         step: undefined,
         data: undefined,
       }),
-    })
+    }),
   );
 
   bot.use(async (ctx: any, next) => {
@@ -183,7 +183,7 @@ export function createBot(): Telegraf {
         return;
       }
       return ctx.reply(
-        "❌ You are not registered as a worker or your access has been disabled."
+        "❌ You are not registered as a worker or your access has been disabled.",
       );
     }
     await showKladMenu(ctx);
@@ -222,9 +222,7 @@ export function createBot(): Telegraf {
 
     if (step === "admin:add_district") {
       const cityId = data["cityId"] as number;
-      await db
-        .insert(districtsTable)
-        .values({ cityId, name: text.trim() });
+      await db.insert(districtsTable).values({ cityId, name: text.trim() });
       ctx.session.step = undefined;
       await ctx.reply(`✅ District added.`);
       await showDistrictsList(ctx, cityId);
@@ -305,14 +303,14 @@ export function createBot(): Telegraf {
           "📤 Send the <b>first file</b> for this lot.\n\n" +
             "Each lot = one buyer gets ALL files you send before /done.\n" +
             "To add another lot after this one, start the upload again.",
-          { parse_mode: "HTML" }
+          { parse_mode: "HTML" },
         );
       } else {
         await ctx.reply(
           "📤 Send files for this product lot.\n\n" +
             "All files you send will go to ONE buyer.\n" +
             "Type /done when finished.",
-          { parse_mode: "HTML" }
+          { parse_mode: "HTML" },
         );
       }
       return;
@@ -336,9 +334,7 @@ export function createBot(): Telegraf {
         .where(eq(usersTable.telegramId, addedBy as number))
         .then((r) => r[0]);
       const workerTag =
-        workerData?.username ??
-        userRow?.username ??
-        String(addedBy);
+        workerData?.username ?? userRow?.username ?? String(addedBy);
 
       if (step === "admin:add_product:content" || !currentProductId) {
         const [inserted] = await db
@@ -368,7 +364,7 @@ export function createBot(): Telegraf {
         };
         ctx.session.step = "admin:add_product:more_files";
         await ctx.reply(
-          "✅ Text content saved. Send more files to add to this lot, or /done to finish."
+          "✅ Text content saved. Send more files to add to this lot, or /done to finish.",
         );
       } else {
         const product = await db
@@ -390,7 +386,7 @@ export function createBot(): Telegraf {
             .where(eq(productsTable.id, currentProductId));
         }
         await ctx.reply(
-          "✅ Text added to lot. Send more files or /done to finish."
+          "✅ Text added to lot. Send more files or /done to finish.",
         );
       }
       return;
@@ -418,17 +414,13 @@ export function createBot(): Telegraf {
         }
       }
       ctx.session.step = undefined;
-      await ctx.reply(
-        `✅ Broadcast complete: ${sent} sent, ${failed} failed.`
-      );
+      await ctx.reply(`✅ Broadcast complete: ${sent} sent, ${failed} failed.`);
       await showCommsMenu(ctx);
       return;
     }
 
     if (step === "admin:welcome_template") {
-      await db
-        .insert(welcomeTemplatesTable)
-        .values({ text, isActive: false });
+      await db.insert(welcomeTemplatesTable).values({ text, isActive: false });
       ctx.session.step = undefined;
       await ctx.reply("✅ Welcome template saved.");
       await showWelcomeMenu(ctx);
@@ -453,8 +445,7 @@ export function createBot(): Telegraf {
     }
 
     if (step === "admin:create_discount_code:uses") {
-      const maxUses =
-        text.trim() === "" ? null : parseInt(text.trim());
+      const maxUses = text.trim() === "" ? null : parseInt(text.trim());
       ctx.session.data = { ...data, maxUses };
       ctx.session.step = "admin:create_discount_code:stacks";
       await ctx.reply(
@@ -472,7 +463,7 @@ export function createBot(): Telegraf {
               callback_data: "disc:code_stack:no",
             },
           ],
-        ])
+        ]),
       );
       return;
     }
@@ -510,13 +501,12 @@ export function createBot(): Telegraf {
           .from(usersTable)
           .then((users) =>
             users.find(
-              (u) =>
-                (u.username ?? "").toLowerCase() === uname.toLowerCase()
-            )
+              (u) => (u.username ?? "").toLowerCase() === uname.toLowerCase(),
+            ),
           );
         if (!user) {
           return ctx.reply(
-            "User not found. Make sure they have /start'd the bot first."
+            "User not found. Make sure they have /start'd the bot first.",
           );
         }
         targetId = user.telegramId;
@@ -529,7 +519,7 @@ export function createBot(): Telegraf {
         .onConflictDoNothing();
       ctx.session.step = undefined;
       await ctx.reply(
-        `✅ Worker ${username ? `@${username}` : targetId} added.`
+        `✅ Worker ${username ? `@${username}` : targetId} added.`,
       );
       await showWorkersMenu(ctx);
       return;
@@ -541,7 +531,7 @@ export function createBot(): Telegraf {
       const amount = parseFloat(amtStr ?? "");
       if (isNaN(targetId) || isNaN(amount) || amount <= 0) {
         return ctx.reply(
-          "Usage: <telegram_id> <amount>\nExample: 123456789 50.00"
+          "Usage: <telegram_id> <amount>\nExample: 123456789 50.00",
         );
       }
       const user = await db
@@ -557,12 +547,12 @@ export function createBot(): Telegraf {
         .where(eq(usersTable.telegramId, targetId));
       ctx.session.step = undefined;
       await ctx.reply(
-        `✅ Added ${formatEur(amount)} to user ${targetId}. New balance: ${formatEur(newBal)}.`
+        `✅ Added ${formatEur(amount)} to user ${targetId}. New balance: ${formatEur(newBal)}.`,
       );
       try {
         await bot.telegram.sendMessage(
           targetId,
-          `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`
+          `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
         );
       } catch {}
       await showToolsMenu(ctx);
@@ -587,12 +577,12 @@ export function createBot(): Telegraf {
         .where(eq(usersTable.telegramId, targetId));
       ctx.session.step = undefined;
       await ctx.reply(
-        `✅ Added ${formatEur(amount)} to user ${targetId}. New balance: ${formatEur(newBal)}.`
+        `✅ Added ${formatEur(amount)} to user ${targetId}. New balance: ${formatEur(newBal)}.`,
       );
       try {
         await bot.telegram.sendMessage(
           targetId,
-          `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`
+          `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
         );
       } catch {}
       await showUserProfile(ctx, String(targetId));
@@ -602,9 +592,7 @@ export function createBot(): Telegraf {
     if (step === "admin:tier_add:name") {
       ctx.session.data = { ...data, tierName: text.trim() };
       ctx.session.step = "admin:tier_add:threshold";
-      await ctx.reply(
-        "Enter threshold (number of purchases or EUR spent):"
-      );
+      await ctx.reply("Enter threshold (number of purchases or EUR spent):");
       return;
     }
 
@@ -694,7 +682,10 @@ export function createBot(): Telegraf {
       return;
     }
 
-    if (step === "shop:apply_code_paynow" || step === "shop:apply_code_basket") {
+    if (
+      step === "shop:apply_code_paynow" ||
+      step === "shop:apply_code_basket"
+    ) {
       const returnTo = step === "shop:apply_code_paynow" ? "paynow" : "basket";
       await applyDiscountCode(ctx, text, returnTo);
       return;
@@ -712,7 +703,9 @@ export function createBot(): Telegraf {
         addedBy: ctx.from.id,
       };
       ctx.session.step = "admin:add_product:content";
-      await ctx.reply("Send the product files (all files go to ONE buyer). Type /done when finished.");
+      await ctx.reply(
+        "Send the product files (all files go to ONE buyer). Type /done when finished.",
+      );
       return;
     }
   });
@@ -791,7 +784,7 @@ export function createBot(): Telegraf {
       ctx.session.data = { ...data, currentProductId: inserted?.id };
       ctx.session.step = "admin:add_product:more_files";
       await ctx.reply(
-        "✅ File saved! Send more files to add to this lot, or /done to finish."
+        "✅ File saved! Send more files to add to this lot, or /done to finish.",
       );
     } else if (
       (step === "admin:add_product:more_files" ||
@@ -818,11 +811,11 @@ export function createBot(): Telegraf {
           .where(eq(productsTable.id, currentProductId));
       }
       await ctx.reply(
-        `✅ File ${(data["fileCount"] as number ?? 1) + 1} added to lot. Send more or /done to finish.`
+        `✅ File ${((data["fileCount"] as number) ?? 1) + 1} added to lot. Send more or /done to finish.`,
       );
       ctx.session.data = {
         ...data,
-        fileCount: (data["fileCount"] as number ?? 1) + 1,
+        fileCount: ((data["fileCount"] as number) ?? 1) + 1,
       };
     } else if (step === "admin:add_product:bulk") {
       const [inserted] = await db
@@ -848,10 +841,10 @@ export function createBot(): Telegraf {
           .where(eq(workersTable.id, workerData.id));
       }
 
-      const bulkCount = (data["bulkCount"] as number ?? 0) + 1;
+      const bulkCount = ((data["bulkCount"] as number) ?? 0) + 1;
       ctx.session.data = { ...data, bulkCount };
       await ctx.reply(
-        `✅ Unit ${bulkCount} added. Send another file or /done to finish bulk upload.`
+        `✅ Unit ${bulkCount} added. Send another file or /done to finish bulk upload.`,
       );
     }
   }
@@ -869,11 +862,11 @@ export function createBot(): Telegraf {
       step === "admin:add_product:content"
     ) {
       const data = ctx.session.data ?? {};
-      const fileCount = (data["fileCount"] as number ?? 0) + 1;
+      const fileCount = ((data["fileCount"] as number) ?? 0) + 1;
       ctx.session.step = undefined;
       ctx.session.data = undefined;
       await ctx.reply(
-        `✅ Lot complete. ${fileCount} file(s) saved — one buyer will receive all of them.`
+        `✅ Lot complete. ${fileCount} file(s) saved — one buyer will receive all of them.`,
       );
       if (await isAdmin(ctx.from.id)) {
         await showProductsMenu(ctx);
@@ -900,9 +893,7 @@ export function createBot(): Telegraf {
 
     try {
       if (action === "admin") {
-        if (
-          !(await isAdmin(ctx.from.id))
-        )
+        if (!(await isAdmin(ctx.from.id)))
           return ctx.answerCbQuery("Not authorized.", { show_alert: true });
         const sub = parts[0];
         if (sub === "main") return showAdminMenu(ctx);
@@ -920,7 +911,7 @@ export function createBot(): Telegraf {
             {
               parse_mode: "HTML",
               ...inlineKeyboard([[BACK_BTN("admin:main")]]),
-            }
+            },
           );
         }
         if (sub === "purchases") {
@@ -953,7 +944,7 @@ export function createBot(): Telegraf {
           return showDistrictDetail(
             ctx,
             parseInt(parts[1]!),
-            parseInt(parts[2]!)
+            parseInt(parts[2]!),
           );
         if (sub === "add_dist") {
           ctx.session.step = "admin:add_district";
@@ -969,11 +960,7 @@ export function createBot(): Telegraf {
           return ctx.editMessageText("Enter new name for this district:");
         }
         if (sub === "del_dist")
-          return deleteDistrict(
-            ctx,
-            parseInt(parts[1]!),
-            parseInt(parts[2]!)
-          );
+          return deleteDistrict(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
         return;
       }
 
@@ -984,7 +971,7 @@ export function createBot(): Telegraf {
         if (sub === "add_type") {
           ctx.session.step = "admin:add_type_name";
           return ctx.editMessageText(
-            "Enter the product type name (e.g. Coffee):"
+            "Enter the product type name (e.g. Coffee):",
           );
         }
         if (sub === "type_detail")
@@ -1050,7 +1037,7 @@ export function createBot(): Telegraf {
             {
               parse_mode: "HTML",
               ...inlineKeyboard([[BACK_BTN("admin:products")]]),
-            }
+            },
           );
         }
         return;
@@ -1112,9 +1099,14 @@ export function createBot(): Telegraf {
       if (action === "manage_prod") {
         if (!(await isAdmin(ctx.from.id))) return;
         const sub = parts[0];
-        if (sub === "city") return showManageProdDistricts(ctx, parseInt(parts[1]!));
+        if (sub === "city")
+          return showManageProdDistricts(ctx, parseInt(parts[1]!));
         if (sub === "dist")
-          return showManageProdTypes(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
+          return showManageProdTypes(
+            ctx,
+            parseInt(parts[1]!),
+            parseInt(parts[2]!),
+          );
         if (sub === "type") {
           const page = parseInt(parts[4] ?? "0");
           return showProductList(
@@ -1122,7 +1114,7 @@ export function createBot(): Telegraf {
             parseInt(parts[1]!),
             parseInt(parts[2]!),
             parseInt(parts[3]!),
-            page
+            page,
           );
         }
         if (sub === "del") {
@@ -1138,7 +1130,7 @@ export function createBot(): Telegraf {
             parseInt(parts[2]!),
             parseInt(parts[3]!),
             parseInt(parts[4]!),
-            page
+            page,
           );
         }
         if (sub === "delall")
@@ -1146,7 +1138,7 @@ export function createBot(): Telegraf {
             ctx,
             parseInt(parts[1]!),
             parseInt(parts[2]!),
-            parseInt(parts[3]!)
+            parseInt(parts[3]!),
           );
         return;
       }
@@ -1160,8 +1152,10 @@ export function createBot(): Telegraf {
         }
         if (sub === "ban") return banUser(ctx, parseInt(parts[1]!));
         if (sub === "unban") return unbanUser(ctx, parseInt(parts[1]!));
-        if (sub === "mk_reseller") return makeReseller(ctx, parseInt(parts[1]!));
-        if (sub === "rm_reseller") return removeReseller(ctx, parseInt(parts[1]!));
+        if (sub === "mk_reseller")
+          return makeReseller(ctx, parseInt(parts[1]!));
+        if (sub === "rm_reseller")
+          return removeReseller(ctx, parseInt(parts[1]!));
         if (sub === "export") return exportUsersCsv(ctx);
         if (sub === "resellers") {
           const resellers = await db
@@ -1173,7 +1167,7 @@ export function createBot(): Telegraf {
           else
             text += resellers
               .map((r) =>
-                r.username ? `• @${r.username}` : `• ${r.telegramId}`
+                r.username ? `• @${r.username}` : `• ${r.telegramId}`,
               )
               .join("\n");
           return ctx.editMessageText(text, {
@@ -1197,7 +1191,9 @@ export function createBot(): Telegraf {
         if (sub === "city") return salesByCity(ctx);
         if (sub === "type") return salesByType(ctx);
         if (sub === "top") {
-          const { count: drizzleCount, sum: drizzleSum } = await import("drizzle-orm");
+          const { count: drizzleCount, sum: drizzleSum } = await import(
+            "drizzle-orm"
+          );
           const rows = await db
             .select({
               size: productsTable.size,
@@ -1207,7 +1203,7 @@ export function createBot(): Telegraf {
             .from(purchasesTable)
             .innerJoin(
               productsTable,
-              eq(purchasesTable.productId, productsTable.id)
+              eq(purchasesTable.productId, productsTable.id),
             )
             .where(eq(purchasesTable.refunded, false))
             .groupBy(productsTable.size)
@@ -1231,7 +1227,7 @@ export function createBot(): Telegraf {
         if (sub === "broadcast") {
           ctx.session.step = "admin:broadcast";
           return ctx.editMessageText(
-            "Type the message to broadcast (HTML supported):"
+            "Type the message to broadcast (HTML supported):",
           );
         }
         if (sub === "welcome") return showWelcomeMenu(ctx);
@@ -1244,9 +1240,7 @@ export function createBot(): Telegraf {
         if (sub === "welcome_del")
           return deleteWelcomeTemplate(ctx, parseInt(parts[1]!));
         if (sub === "welcome_reset") {
-          await db
-            .update(welcomeTemplatesTable)
-            .set({ isActive: false });
+          await db.update(welcomeTemplatesTable).set({ isActive: false });
           await ctx.answerCbQuery("Welcome message reset to default.");
           return showWelcomeMenu(ctx);
         }
@@ -1271,7 +1265,7 @@ export function createBot(): Telegraf {
         if (sub === "create_code") {
           ctx.session.step = "admin:create_discount_code:name";
           return ctx.editMessageText(
-            "Enter the discount code (will be uppercased):"
+            "Enter the discount code (will be uppercased):",
           );
         }
         if (sub === "del_code")
@@ -1288,7 +1282,7 @@ export function createBot(): Telegraf {
           ctx.session.step = undefined;
           await ctx.editMessageText(
             `✅ Discount code <b>${(d as any)["code"]}</b> created.`,
-            { parse_mode: "HTML" }
+            { parse_mode: "HTML" },
           );
           return showDiscountCodes(ctx);
         }
@@ -1342,10 +1336,7 @@ export function createBot(): Telegraf {
           const discounts = await db.select().from(resellerDiscountsTable);
           let text = "👑 <b>Reseller Discounts</b>\n\n";
           if (discounts.length === 0) text += "No reseller discounts set.";
-          else
-            discounts.forEach(
-              (d) => (text += `• ${d.percentOff}% off\n`)
-            );
+          else discounts.forEach((d) => (text += `• ${d.percentOff}% off\n`));
           return ctx.editMessageText(text, {
             parse_mode: "HTML",
             ...inlineKeyboard([[BACK_BTN("admin:discounts")]]),
@@ -1372,12 +1363,10 @@ export function createBot(): Telegraf {
             .where(eq(tierLevelsTable.id, parseInt(parts[1]!)))
             .then((r) => r[0]);
           if (!tier) return;
-          const kb = inlineKeyboard([
-            [BACK_BTN("disc:tiers")],
-          ]);
+          const kb = inlineKeyboard([[BACK_BTN("disc:tiers")]]);
           return ctx.editMessageText(
             `✏️ <b>${tier.name}</b>\nThreshold: ${tier.threshold}\nDiscount: ${tier.globalDiscountPercent}%`,
-            { parse_mode: "HTML", ...kb }
+            { parse_mode: "HTML", ...kb },
           );
         }
         return;
@@ -1401,7 +1390,7 @@ export function createBot(): Telegraf {
         if (sub === "add_balance") {
           ctx.session.step = "admin:add_balance";
           return ctx.editMessageText(
-            "Enter <telegram_id> <amount> (e.g. 123456789 50.00):"
+            "Enter <telegram_id> <amount> (e.g. 123456789 50.00):",
           );
         }
         return;
@@ -1413,12 +1402,11 @@ export function createBot(): Telegraf {
         if (sub === "add") {
           ctx.session.step = "admin:add_worker";
           return ctx.editMessageText(
-            "Enter the worker's Telegram ID or @username:"
+            "Enter the worker's Telegram ID or @username:",
           );
         }
         if (sub === "list") return showWorkersList(ctx);
-        if (sub === "detail")
-          return showWorkerDetail(ctx, parseInt(parts[1]!));
+        if (sub === "detail") return showWorkerDetail(ctx, parseInt(parts[1]!));
         if (sub === "enable")
           return toggleWorker(ctx, parseInt(parts[1]!), true);
         if (sub === "disable")
@@ -1433,20 +1421,15 @@ export function createBot(): Telegraf {
         if (sub === "profile") return showProfile(ctx);
         if (sub === "pricelist") return showPriceList(ctx);
         if (sub === "cities") return showShopCities(ctx);
-        if (sub === "dist")
-          return showShopDistricts(ctx, parseInt(parts[1]!));
+        if (sub === "dist") return showShopDistricts(ctx, parseInt(parts[1]!));
         if (sub === "types")
-          return showShopTypes(
-            ctx,
-            parseInt(parts[1]!),
-            parseInt(parts[2]!)
-          );
+          return showShopTypes(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
         if (sub === "sizes")
           return showShopSizes(
             ctx,
             parseInt(parts[1]!),
             parseInt(parts[2]!),
-            parseInt(parts[3]!)
+            parseInt(parts[3]!),
           );
         if (sub === "detail") {
           const size = decodeURIComponent(parts[4]!);
@@ -1455,7 +1438,7 @@ export function createBot(): Telegraf {
             parseInt(parts[1]!),
             parseInt(parts[2]!),
             parseInt(parts[3]!),
-            size
+            size,
           );
         }
         if (sub === "buy") {
@@ -1465,7 +1448,7 @@ export function createBot(): Telegraf {
             parseInt(parts[1]!),
             parseInt(parts[2]!),
             parseInt(parts[3]!),
-            size
+            size,
           );
         }
         if (sub === "paynow") {
@@ -1475,22 +1458,18 @@ export function createBot(): Telegraf {
             parseInt(parts[1]!),
             parseInt(parts[2]!),
             parseInt(parts[3]!),
-            size
+            size,
           );
         }
         if (sub === "paynow_summary") return showPaymentSummary(ctx);
         if (sub === "do_paynow") return doPayNow(ctx);
         if (sub === "apply_code_paynow") {
           ctx.session.step = "shop:apply_code_paynow";
-          return ctx.editMessageText(
-            "🎟 Enter your discount code:"
-          );
+          return ctx.editMessageText("🎟 Enter your discount code:");
         }
         if (sub === "apply_code_basket") {
           ctx.session.step = "shop:apply_code_basket";
-          return ctx.editMessageText(
-            "🎟 Enter your discount code:"
-          );
+          return ctx.editMessageText("🎟 Enter your discount code:");
         }
         if (sub === "basket") return showBasket(ctx);
         if (sub === "checkout") return checkout(ctx);
@@ -1516,7 +1495,7 @@ export function createBot(): Telegraf {
         if (sub === "menu") {
           const data = ctx.session.data ?? {};
           const total = Number(
-            data["discountedTotal"] ?? data["pendingEur"] ?? 0
+            data["discountedTotal"] ?? data["pendingEur"] ?? 0,
           );
           return showCryptoMenu(ctx, total);
         }
@@ -1537,16 +1516,12 @@ export function createBot(): Telegraf {
       }
 
       if (action === "klad") {
-        if (
-          !(await isWorker(ctx.from.id)) &&
-          !(await isAdmin(ctx.from.id))
-        )
+        if (!(await isWorker(ctx.from.id)) && !(await isAdmin(ctx.from.id)))
           return ctx.answerCbQuery("Not authorized.", { show_alert: true });
         const sub = parts[0];
         if (sub === "exit") return showHome(ctx);
         if (sub === "upload") return showKladCities(ctx);
-        if (sub === "city")
-          return showKladDistricts(ctx, parseInt(parts[1]!));
+        if (sub === "city") return showKladDistricts(ctx, parseInt(parts[1]!));
         if (sub === "dist")
           return showKladTypes(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
         if (sub === "type")
@@ -1554,7 +1529,7 @@ export function createBot(): Telegraf {
             ctx,
             parseInt(parts[1]!),
             parseInt(parts[2]!),
-            parseInt(parts[3]!)
+            parseInt(parts[3]!),
           );
         if (sub === "size") {
           const cityId = parseInt(parts[1]!);
@@ -1570,8 +1545,8 @@ export function createBot(): Telegraf {
                 eq(productsTable.cityId, cityId),
                 eq(productsTable.districtId, districtId),
                 eq(productsTable.typeId, typeId),
-                eq(productsTable.size, size)
-              )
+                eq(productsTable.size, size),
+              ),
             )
             .limit(1)
             .then((r) => r[0]);
@@ -1583,7 +1558,7 @@ export function createBot(): Telegraf {
                 ...inlineKeyboard([
                   [BACK_BTN(`klad:type:${cityId}:${districtId}:${typeId}`)],
                 ]),
-              }
+              },
             );
           }
 
@@ -1609,11 +1584,10 @@ export function createBot(): Telegraf {
                   },
                 ],
               ]),
-            }
+            },
           );
         }
-        if (sub === "my_uploads")
-          return showKladMyUploads(ctx, ctx.from.id);
+        if (sub === "my_uploads") return showKladMyUploads(ctx, ctx.from.id);
         if (sub === "del_upload") {
           await db
             .update(productsTable)
@@ -1626,9 +1600,7 @@ export function createBot(): Telegraf {
       }
     } catch (err) {
       logger.error({ err }, "Error handling callback query");
-      await ctx
-        .reply("An error occurred. Please try again.")
-        .catch(() => {});
+      await ctx.reply("An error occurred. Please try again.").catch(() => {});
     }
   });
 

@@ -18,6 +18,47 @@ import { inlineKeyboard, BACK_BTN } from "../keyboards";
 
 export const SOL_WALLET = "HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59";
 const SOL_RPC = "https://api.mainnet-beta.solana.com";
+
+type PendingInvoice = { chatId: number; expiresAt: number };
+const pendingInvoices = new Map<number, PendingInvoice>();
+
+export function registerPendingInvoice(
+  userId: number,
+  chatId: number,
+  expiresAt: number,
+) {
+  pendingInvoices.set(userId, { chatId, expiresAt });
+}
+
+export function cancelPendingInvoice(userId: number) {
+  pendingInvoices.delete(userId);
+}
+
+export function startInvoiceBackgroundChecker(telegram: any) {
+  setInterval(async () => {
+    const now = Date.now();
+    for (const [userId, inv] of Array.from(pendingInvoices.entries())) {
+      if (now > inv.expiresAt) {
+        pendingInvoices.delete(userId);
+        await releaseBasket(userId).catch(() => {});
+        await telegram
+          .sendMessage(
+            inv.chatId,
+            "⏰ <b>Payment Timeout</b>\n\nYour payment invoice has expired. Your basket has been cleared.",
+            {
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "🏠 Home", callback_data: "shop:home" }],
+                ],
+              },
+            },
+          )
+          .catch(() => {});
+      }
+    }
+  }, 15000);
+}
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
 export async function getSolPrice(): Promise<number> {
@@ -70,14 +111,8 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
   const solAmount = parseFloat((eurAmount / solPrice).toFixed(6));
   const expiresAt = addMinutes(new Date(), 15);
 
-  ctx.session.data = {
-    ...data,
-    solAmount,
-    invoiceExpiresAt: expiresAt.getTime(),
-    invoiceCreatedAt: Date.now(),
-  };
-
   const telegramId = ctx.from!.id;
+  const chatId = ctx.chat!.id;
   const items = await getUserBasket(telegramId);
 
   let itemsText = "";
@@ -97,7 +132,7 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     itemsText += `  • ${type?.emoji ?? "💎"} ${type?.name ?? "?"} ${it.size} — ${city?.name ?? "?"}/${district?.name ?? "?"} (${formatEur(it.price)})\n`;
   }
 
-  const text =
+  const baseText =
     `🧾 <b>Payment Invoice</b>\n\n` +
     (itemsText ? `<b>Items:</b>\n${itemsText}\n` : "") +
     `Total: <b>${formatEur(eurAmount)}</b>\n` +
@@ -105,9 +140,27 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     `Send exactly: <code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${SOL_WALLET}</code>\n` +
     `────────────────────────\n` +
-    `⏳ <b>Expires:</b> ${formatDate(expiresAt)} (LT)\n\n` +
-    `💡 Sending a little more is fine — any overpay goes to your balance.\n` +
-    `✅ Auto-checked every 30 seconds.`;
+    `💡 Sending a little more is fine — any overpay goes to your balance.`;
+
+  const remaining = Math.max(
+    0,
+    Math.floor((expiresAt.getTime() - Date.now()) / 1000),
+  );
+  const mins = Math.floor(remaining / 60);
+  const secs = remaining % 60;
+  const text =
+    baseText +
+    `\n\n⏳ Time remaining: <b>${mins}:${secs.toString().padStart(2, "0")}</b>`;
+
+  ctx.session.data = {
+    ...data,
+    solAmount,
+    invoiceExpiresAt: expiresAt.getTime(),
+    invoiceCreatedAt: Date.now(),
+    invoiceBaseText: baseText,
+  };
+
+  registerPendingInvoice(telegramId, chatId, expiresAt.getTime());
 
   const kb = inlineKeyboard([
     [{ text: "🔄 Check Payment", callback_data: "pay:check_sol" }],
@@ -131,14 +184,34 @@ export async function checkSolPayment(
   }
 
   if (Date.now() > expiresAt) {
+    cancelPendingInvoice(ctx.from!.id);
     ctx.session.data = undefined;
     await ctx.answerCbQuery("Invoice expired. Please start over.", {
       show_alert: true,
     });
+    await ctx
+      .editMessageText(
+        "⏰ <b>Payment Timeout</b>\n\nYour invoice has expired. Your basket has been cleared.",
+        {
+          parse_mode: "HTML",
+          ...inlineKeyboard([[{ text: "🏠 Home", callback_data: "shop:home" }]]),
+        },
+      )
+      .catch(() => {});
+    await releaseBasket(ctx.from!.id).catch(() => {});
     return;
   }
 
   await ctx.answerCbQuery("Checking payment…");
+
+  const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  const mins = Math.floor(remaining / 60);
+  const secs = remaining % 60;
+  const baseText =
+    (data["invoiceBaseText"] as string) ?? "🧾 <b>Payment Invoice</b>";
+  const updatedText =
+    baseText +
+    `\n\n⏳ Time remaining: <b>${mins}:${secs.toString().padStart(2, "0")}</b>`;
 
   try {
     const sigCtrl = new AbortController();
@@ -201,22 +274,11 @@ export async function checkSolPayment(
       }
     }
 
-    const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-
-    const existingText =
-      (ctx.callbackQuery as any)?.message?.text ?? "🧾 Payment Invoice";
     await ctx
-      .editMessageText(existingText, {
+      .editMessageText(updatedText, {
         parse_mode: "HTML",
         ...inlineKeyboard([
-          [
-            {
-              text: `🔄 Check Again (${mins}:${secs.toString().padStart(2, "0")} left)`,
-              callback_data: "pay:check_sol",
-            },
-          ],
+          [{ text: "🔄 Check Again", callback_data: "pay:check_sol" }],
           [{ text: "✖ Cancel", callback_data: "pay:cancel" }],
         ]),
       })
@@ -234,6 +296,7 @@ export async function completePurchase(
   overpayEur = 0,
 ): Promise<void> {
   const telegramId = ctx.from!.id;
+  cancelPendingInvoice(telegramId);
   const user = await getUser(telegramId);
   if (!user) return;
 

@@ -140,6 +140,8 @@ import {
   showSolInvoice,
   checkSolPayment,
   completePurchase,
+  cancelPendingInvoice,
+  startInvoiceBackgroundChecker,
 } from "./handlers/payments";
 import { formatEur } from "./utils";
 import { inlineKeyboard, BACK_BTN } from "./keyboards";
@@ -1502,7 +1504,9 @@ export function createBot(): Telegraf {
         if (sub === "reviews_menu") return showReviewsMenu(ctx);
         if (sub === "review_prompt") {
           ctx.session.step = "shop:review";
-          return ctx.editMessageText("⭐ Write your review:");
+          return ctx.editMessageText("⭐ Write your review:", {
+            ...inlineKeyboard([[BACK_BTN("shop:reviews_menu")]]),
+          });
         }
         if (sub === "view_reviews") {
           return showCustomerReviews(ctx);
@@ -1527,6 +1531,7 @@ export function createBot(): Telegraf {
         }
         if (sub === "check_sol") return checkSolPayment(ctx);
         if (sub === "cancel") {
+          cancelPendingInvoice(ctx.from.id);
           await releaseBasket(ctx.from.id);
           ctx.session.step = undefined;
           ctx.session.data = undefined;
@@ -1660,6 +1665,8 @@ export function createBot(): Telegraf {
   bot.catch((err: any) => {
     logger.error({ err }, "Bot error");
   });
+
+  startInvoiceBackgroundChecker(bot.telegram);
 
   return bot;
 }

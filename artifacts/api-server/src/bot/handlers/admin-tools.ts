@@ -35,17 +35,10 @@ export async function showToolsMenu(ctx: Context & { session: BotSession }) {
 
 export async function clearAllReservations(ctx: Context & { session: BotSession }) {
   const cleared = await clearExpiredReservations();
-  const allBaskets = await db.select().from(basketsTable);
-  let total = cleared;
-  for (const item of allBaskets) {
-    await db
-      .update(productsTable)
-      .set({ status: "available", reservedBy: null, reservedUntil: null })
-      .where(eq(productsTable.id, item.productId));
-    total++;
-  }
+  const basketRows = await db.select({ id: basketsTable.id }).from(basketsTable);
+  const total = cleared + basketRows.length;
   await db.delete(basketsTable);
-  await ctx.answerCbQuery(`Cleared ${total} reservations.`, { show_alert: true });
+  await ctx.answerCbQuery(`Cleared ${total} basket entries.`, { show_alert: true });
   await showToolsMenu(ctx);
 }
 

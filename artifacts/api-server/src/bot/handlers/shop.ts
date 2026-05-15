@@ -608,8 +608,7 @@ export async function addToBasket(
     return;
   }
 
-  await ctx.answerCbQuery(`✅ ${size} added to basket!`);
-  await showSizeDetail(ctx, cityId, districtId, typeId, size);
+  await ctx.answerCbQuery(`✅ ${size} added to basket!`, { show_alert: true });
 }
 
 export async function payNow(
@@ -1057,12 +1056,10 @@ export async function showCustomerReviews(
     .select({
       id: reviewsTable.id,
       text: reviewsTable.text,
-      stars: reviewsTable.stars,
       createdAt: reviewsTable.createdAt,
-      username: usersTable.username,
+      username: reviewsTable.username,
     })
     .from(reviewsTable)
-    .leftJoin(usersTable, eq(reviewsTable.userId, usersTable.telegramId))
     .orderBy(desc(reviewsTable.createdAt))
     .limit(20);
 
@@ -1082,9 +1079,8 @@ export async function showCustomerReviews(
 
   let text = `👁 <b>Customer Reviews</b>\n\n`;
   for (const r of reviews) {
-    const stars = "⭐".repeat(Math.min(Math.max(r.stars ?? 5, 1), 5));
     const who = r.username ? `@${r.username}` : "Customer";
-    text += `${stars} <b>${who}</b>\n${r.text}\n\n`;
+    text += `⭐ <b>${who}</b>\n${r.text}\n\n`;
   }
 
   const kb = inlineKeyboard([

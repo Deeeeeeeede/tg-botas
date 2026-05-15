@@ -80,10 +80,9 @@ export async function showHome(ctx: Context & { session: BotSession }) {
       { text: "⭐ Top Up", callback_data: "shop:topup" },
     ],
     [
-      { text: "👁 View Reviews", callback_data: "shop:view_reviews" },
-      { text: "📝 Leave a Review", callback_data: "shop:review_prompt" },
+      { text: "📝 Reviews", callback_data: "shop:reviews_menu" },
+      { text: "📋 Price List", callback_data: "shop:pricelist" },
     ],
-    [{ text: "📋 Price List", callback_data: "shop:pricelist" }],
   ]);
 
   if (ctx.callbackQuery) {
@@ -1046,6 +1045,22 @@ export async function showTopUp(ctx: Context & { session: BotSession }) {
       parse_mode: "HTML",
       ...inlineKeyboard([[BACK_BTN("shop:home")]]),
     });
+  }
+}
+
+export async function showReviewsMenu(ctx: Context & { session: BotSession }) {
+  const kb = inlineKeyboard([
+    [{ text: "👀 View Reviews", callback_data: "shop:view_reviews" }],
+    [{ text: "✍ Leave a Review", callback_data: "shop:review_prompt" }],
+    [{ text: "🏠 Home", callback_data: "shop:home" }],
+  ]);
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText("📝 <b>Reviews Menu</b>", {
+      parse_mode: "HTML",
+      ...kb,
+    });
+  } else {
+    await ctx.reply("📝 <b>Reviews Menu</b>", { parse_mode: "HTML", ...kb });
   }
 }
 

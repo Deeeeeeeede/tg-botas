@@ -31,6 +31,8 @@ import {
   getCities,
   getDistricts,
   getProductTypes,
+  getSetting,
+  setSetting,
 } from "./db";
 import { showAdminMenu } from "./handlers/admin";
 import {
@@ -671,6 +673,36 @@ export function createBot(): Telegraf {
       ctx.session.step = undefined;
       await ctx.reply("✅ Backup token saved.");
       await showBackupTokens(ctx);
+      return;
+    }
+
+    if (step === "admin:set_home_media") {
+      if (!(await isAdmin(ctx.from.id))) return;
+      const msg = ctx.message as any;
+      let fileId: string | undefined;
+      let mediaType: string | undefined;
+      if (msg?.animation) {
+        fileId = msg.animation.file_id;
+        mediaType = "animation";
+      } else if (msg?.video) {
+        fileId = msg.video.file_id;
+        mediaType = "video";
+      } else if (msg?.photo?.length) {
+        fileId = msg.photo[msg.photo.length - 1].file_id;
+        mediaType = "photo";
+      } else if (msg?.document) {
+        fileId = msg.document.file_id;
+        mediaType = "photo";
+      }
+      if (!fileId) {
+        await ctx.reply("Please send a GIF, photo, or video file.");
+        return;
+      }
+      await setSetting("home_media_file_id", fileId);
+      await setSetting("home_media_type", mediaType!);
+      ctx.session.step = undefined;
+      await ctx.reply("✅ Home screen media updated! It will show on the next /start.");
+      await showToolsMenu(ctx);
       return;
     }
 
@@ -1410,6 +1442,18 @@ export function createBot(): Telegraf {
           return ctx.editMessageText(
             "Enter <telegram_id> <amount> (e.g. 123456789 50.00):",
           );
+        }
+        if (sub === "set_media") {
+          ctx.session.step = "admin:set_home_media";
+          return ctx.editMessageText(
+            "🖼 Send me the <b>GIF, photo, or video</b> you want to show on the home screen.\n\nSend /terminate to cancel.",
+            { parse_mode: "HTML" },
+          );
+        }
+        if (sub === "remove_media") {
+          await setSetting("home_media_file_id", "");
+          await ctx.answerCbQuery("✅ Home media removed.", { show_alert: true });
+          return showToolsMenu(ctx);
         }
         return;
       }

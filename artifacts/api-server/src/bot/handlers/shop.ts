@@ -20,6 +20,7 @@ import {
   getProductTypes,
   getSizesForTypeInDistrict,
   getWelcomeText,
+  getSetting,
   addToBasket as dbAddToBasket,
   releaseBasket,
   getUserBasket,
@@ -55,7 +56,12 @@ export async function showHome(ctx: Context & { session: BotSession }) {
     return;
   }
 
-  const welcomeText = await getWelcomeText();
+  const [welcomeText, homeMediaFileId, homeMediaType] = await Promise.all([
+    getWelcomeText(),
+    getSetting("home_media_file_id"),
+    getSetting("home_media_type"),
+  ]);
+
   const basketCount = await db
     .select({ count: count() })
     .from(basketsTable)
@@ -66,7 +72,7 @@ export async function showHome(ctx: Context & { session: BotSession }) {
   const name = ctx.from!.first_name ?? "Customer";
 
   const header =
-    `👋 Hello, <b>${name}</b>!\n\n` +
+    `🖐 Hello, <b>${name}</b>!\n\n` +
     `💰 Balance: <b>${formatEur(user.balance)}</b>\n` +
     `⭐ Status: <b>${user.tierName}</b> ${tierEmoji}\n` +
     `🛒 Basket: <b>${basketCount} item(s)</b>\n\n` +
@@ -74,10 +80,10 @@ export async function showHome(ctx: Context & { session: BotSession }) {
     `⚠️ <b>Note: No refunds.</b>`;
 
   const kb = inlineKeyboard([
-    [{ text: "🏪 Shop", callback_data: "shop:cities" }],
+    [{ text: "🛒 Shop", callback_data: "shop:cities" }],
     [
       { text: "👤 Profile", callback_data: "shop:profile" },
-      { text: "⭐ Top Up", callback_data: "shop:topup" },
+      { text: "💳 Top Up", callback_data: "shop:topup" },
     ],
     [
       { text: "📝 Reviews", callback_data: "shop:reviews_menu" },
@@ -85,7 +91,23 @@ export async function showHome(ctx: Context & { session: BotSession }) {
     ],
   ]);
 
-  if (ctx.callbackQuery) {
+  if (homeMediaFileId) {
+    if (ctx.callbackQuery) {
+      await ctx.deleteMessage().catch(() => {});
+    }
+    const extra = {
+      caption: header,
+      parse_mode: "HTML" as const,
+      ...(kb as any),
+    };
+    if (homeMediaType === "animation") {
+      await ctx.replyWithAnimation(homeMediaFileId, extra);
+    } else if (homeMediaType === "video") {
+      await ctx.replyWithVideo(homeMediaFileId, extra);
+    } else {
+      await ctx.replyWithPhoto(homeMediaFileId, extra);
+    }
+  } else if (ctx.callbackQuery) {
     await ctx.editMessageText(header, { parse_mode: "HTML", ...kb });
   } else {
     await ctx.reply(header, { parse_mode: "HTML", ...kb });
@@ -99,31 +121,37 @@ export async function showProfile(ctx: Context & { session: BotSession }) {
 
   const tierEmoji = TIER_EMOJI[user.tierName] ?? "🏅";
 
-  const tierLevel = await db
-    .select()
-    .from(tierLevelsTable)
-    .where(eq(tierLevelsTable.name, user.tierName))
-    .then((r) => r[0]);
+  const [tierLevel, basketCount] = await Promise.all([
+    db
+      .select()
+      .from(tierLevelsTable)
+      .where(eq(tierLevelsTable.name, user.tierName))
+      .then((r) => r[0]),
+    db
+      .select({ count: count() })
+      .from(basketsTable)
+      .where(eq(basketsTable.userId, telegramId))
+      .then((r) => r[0]?.count ?? 0),
+  ]);
 
   const text =
-    `👤 <b>Your Profile</b>\n\n` +
-    `🪪 Username: ${user.username ? `@${user.username}` : "—"}\n` +
-    `🆔 ID: <code>${telegramId}</code>\n` +
+    `🎉 <b>Your Profile</b>\n\n` +
+    `👤 Status: <b>${user.tierName}</b> ${tierEmoji}\n` +
     `💰 Balance: <b>${formatEur(user.balance)}</b>\n` +
-    `⭐ Status: <b>${user.tierName}</b> ${tierEmoji}\n` +
-    `🛒 Total purchases: <b>${user.purchaseCount}</b>\n` +
-    `💸 Total spent: <b>${formatEur(user.eurSpent)}</b>\n` +
+    `🛒 Total Purchases: <b>${user.purchaseCount}</b>\n` +
+    `🧺 Basket Items: <b>${basketCount}</b>\n` +
     (tierLevel && tierLevel.globalDiscountPercent > 0
-      ? `🎁 Tier discount: <b>${tierLevel.globalDiscountPercent}%</b> off every item\n`
+      ? `🎁 Tier Discount: <b>${tierLevel.globalDiscountPercent}%</b> off every item\n`
       : "") +
-    (user.isReseller ? `👑 Reseller status: <b>Active</b>\n` : "");
+    (user.isReseller ? `👑 Reseller: <b>Active</b>\n` : "");
 
   const profileKb = inlineKeyboard([
     [
-      { text: "🛒 My Basket", callback_data: "shop:basket" },
-      { text: "📋 My Orders", callback_data: "shop:orders:0" },
+      { text: "💳 Top Up", callback_data: "shop:topup" },
+      { text: `🛒 View Basket (${basketCount})`, callback_data: "shop:basket" },
     ],
-    [BACK_BTN("shop:home")],
+    [{ text: "📋 Purchase History", callback_data: "shop:orders:0" }],
+    [{ text: "🏠 Home", callback_data: "shop:home" }],
   ]);
 
   if (ctx.callbackQuery) {

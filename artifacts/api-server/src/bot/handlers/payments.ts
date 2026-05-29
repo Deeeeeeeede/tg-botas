@@ -11,6 +11,7 @@ import {
   citiesTable,
   districtsTable,
   paymentReceiptsTable,
+  topupInvoicesTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { formatEur, generateQueueId, addMinutes, formatDate } from "../utils";
@@ -20,45 +21,96 @@ import { inlineKeyboard, BACK_BTN } from "../keyboards";
 export const SOL_WALLET = "HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59";
 const SOL_RPC = "https://api.mainnet-beta.solana.com";
 
-type PendingInvoice = { chatId: number; expiresAt: number };
-const pendingInvoices = new Map<number, PendingInvoice>();
+type InlineKb = { text: string; callback_data: string }[][];
+type LiveInvoice = {
+  chatId: number;
+  messageId: number;
+  expiresAt: number;
+  baseText: string;
+  keyboard: InlineKb;
+  kind: "purchase" | "topup";
+  topupInvoiceId?: number;
+  lastText?: string;
+};
+const pendingInvoices = new Map<number, LiveInvoice>();
 
-export function registerPendingInvoice(
-  userId: number,
-  chatId: number,
-  expiresAt: number,
-) {
-  pendingInvoices.set(userId, { chatId, expiresAt });
+// Builds the live countdown line appended to the invoice each tick.
+export function countdownLine(expiresAt: number): string {
+  const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  const mins = Math.floor(remaining / 60);
+  const secs = remaining % 60;
+  return `⏳ Time remaining: <b>${mins}:${secs.toString().padStart(2, "0")}</b>`;
+}
+
+export function registerPendingInvoice(userId: number, invoice: LiveInvoice) {
+  pendingInvoices.set(userId, invoice);
 }
 
 export function cancelPendingInvoice(userId: number) {
   pendingInvoices.delete(userId);
 }
 
+// Single ticker that keeps every active invoice's countdown live by editing the
+// invoice message in place, and finalizes the message when it expires. Runs
+// often enough to feel live but well within Telegram's edit rate limits.
+// Process-scoped singleton: bot failover recreates the Telegraf instance in the
+// same process, so guard against spawning duplicate intervals. The shared
+// `telegram` reference is updated on each call so edits use the live instance.
+let invoiceTickerStarted = false;
+let invoiceTelegram: any = null;
 export function startInvoiceBackgroundChecker(telegram: any) {
+  invoiceTelegram = telegram;
+  if (invoiceTickerStarted) return;
+  invoiceTickerStarted = true;
   setInterval(async () => {
+    const telegram = invoiceTelegram;
+    if (!telegram) return;
     const now = Date.now();
     for (const [userId, inv] of Array.from(pendingInvoices.entries())) {
-      if (now > inv.expiresAt) {
+      if (now >= inv.expiresAt) {
         pendingInvoices.delete(userId);
-        await releaseBasket(userId).catch(() => {});
+        if (inv.kind === "purchase") {
+          await releaseBasket(userId).catch(() => {});
+        } else if (inv.kind === "topup" && inv.topupInvoiceId) {
+          await db
+            .update(topupInvoicesTable)
+            .set({ status: "expired" })
+            .where(
+              and(
+                eq(topupInvoicesTable.id, inv.topupInvoiceId),
+                eq(topupInvoicesTable.status, "pending"),
+              ),
+            )
+            .catch(() => {});
+        }
+        const timeoutText =
+          inv.kind === "purchase"
+            ? "⏰ <b>Payment Timeout</b>\n\nYour payment invoice has expired. Your basket has been cleared."
+            : "⏰ <b>Top-Up Expired</b>\n\nYour invoice has expired. Start a new top-up when ready.";
         await telegram
-          .sendMessage(
-            inv.chatId,
-            "⏰ <b>Payment Timeout</b>\n\nYour payment invoice has expired. Your basket has been cleared.",
-            {
-              parse_mode: "HTML",
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: "🏠 Home", callback_data: "shop:home" }],
-                ],
-              },
+          .editMessageText(inv.chatId, inv.messageId, undefined, timeoutText, {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "🏠 Home", callback_data: "shop:home" }],
+              ],
             },
-          )
+          })
           .catch(() => {});
+        continue;
       }
+
+      const text = inv.baseText + "\n\n" + countdownLine(inv.expiresAt);
+      if (text === inv.lastText) continue;
+      inv.lastText = text;
+      await telegram
+        .editMessageText(inv.chatId, inv.messageId, undefined, text, {
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: inv.keyboard },
+        })
+        .catch(() => {});
     }
-  }, 15000);
+  }, 5000);
 }
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -143,15 +195,7 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     `────────────────────────\n` +
     `💡 Sending a little more is fine — any overpay goes to your balance.`;
 
-  const remaining = Math.max(
-    0,
-    Math.floor((expiresAt.getTime() - Date.now()) / 1000),
-  );
-  const mins = Math.floor(remaining / 60);
-  const secs = remaining % 60;
-  const text =
-    baseText +
-    `\n\n⏳ Time remaining: <b>${mins}:${secs.toString().padStart(2, "0")}</b>`;
+  const text = baseText + "\n\n" + countdownLine(expiresAt.getTime());
 
   ctx.session.data = {
     ...data,
@@ -161,14 +205,28 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     invoiceBaseText: baseText,
   };
 
-  registerPendingInvoice(telegramId, chatId, expiresAt.getTime());
-
-  const kb = inlineKeyboard([
+  const keyboard = [
     [{ text: "🔄 Check Payment", callback_data: "pay:check_sol" }],
     [{ text: "✖ Cancel", callback_data: "pay:cancel" }],
-  ]);
+  ];
 
-  await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+  await ctx.editMessageText(text, {
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: keyboard },
+  });
+
+  const messageId = (ctx.callbackQuery?.message as { message_id?: number })
+    ?.message_id;
+  if (messageId) {
+    registerPendingInvoice(telegramId, {
+      chatId,
+      messageId,
+      expiresAt: expiresAt.getTime(),
+      baseText,
+      keyboard,
+      kind: "purchase",
+    });
+  }
 }
 
 export async function checkSolPayment(
@@ -203,17 +261,8 @@ export async function checkSolPayment(
     return;
   }
 
-  await ctx.answerCbQuery("Checking payment…");
-
-  const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-  const mins = Math.floor(remaining / 60);
-  const secs = remaining % 60;
-  const baseText =
-    (data["invoiceBaseText"] as string) ?? "🧾 <b>Payment Invoice</b>";
-  const updatedText =
-    baseText +
-    `\n\n⏳ Time remaining: <b>${mins}:${secs.toString().padStart(2, "0")}</b>`;
-
+  // The global callback_query middleware already answered this callback, so the
+  // loading spinner is dismissed; the live ticker keeps the countdown moving.
   try {
     const sigCtrl = new AbortController();
     const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
@@ -285,15 +334,8 @@ export async function checkSolPayment(
       }
     }
 
-    await ctx
-      .editMessageText(updatedText, {
-        parse_mode: "HTML",
-        ...inlineKeyboard([
-          [{ text: "🔄 Check Again", callback_data: "pay:check_sol" }],
-          [{ text: "✖ Cancel", callback_data: "pay:cancel" }],
-        ]),
-      })
-      .catch(() => {});
+    // No payment found yet. The background ticker keeps the countdown live,
+    // so there is nothing to re-render here — just leave the invoice ticking.
   } catch {
     await ctx
       .reply("⚠️ Could not reach Solana network. Please try again.")

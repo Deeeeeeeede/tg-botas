@@ -3,9 +3,15 @@ import { BotSession } from "../session";
 import { db } from "@workspace/db";
 import { usersTable, topupInvoicesTable, paymentReceiptsTable } from "@workspace/db";
 import { eq, and, gt, sql } from "drizzle-orm";
-import { formatEur, addMinutes, formatDate } from "../utils";
+import { formatEur, addMinutes } from "../utils";
 import { inlineKeyboard, BACK_BTN, editOrReplace } from "../keyboards";
-import { getSolPrice, SOL_WALLET } from "./payments";
+import {
+  getSolPrice,
+  SOL_WALLET,
+  registerPendingInvoice,
+  cancelPendingInvoice,
+  countdownLine,
+} from "./payments";
 import { getUser } from "../db";
 
 const SOL_RPC = "https://api.mainnet-beta.solana.com";
@@ -85,19 +91,32 @@ export async function handleTopUpAmount(
   ctx.session.step = undefined;
   ctx.session.data = { topupInvoiceId: invoice!.id };
 
-  await ctx.reply(
-    buildInvoiceText(eurAmount, solAmount, expiresAt),
+  const baseText = buildInvoiceText(eurAmount, solAmount);
+  const keyboard = [
+    [{ text: "✅ Check Payment", callback_data: "topup:check" }],
+    [{ text: "❌ Cancel", callback_data: "topup:cancel" }],
+  ];
+
+  const sent = await ctx.reply(
+    baseText + "\n\n" + countdownLine(expiresAt.getTime()),
     {
       parse_mode: "HTML",
-      ...inlineKeyboard([
-        [{ text: "✅ Check Payment", callback_data: "topup:check" }],
-        [{ text: "❌ Cancel", callback_data: "topup:cancel" }],
-      ]),
+      reply_markup: { inline_keyboard: keyboard },
     }
   );
+
+  registerPendingInvoice(telegramId, {
+    chatId: ctx.chat!.id,
+    messageId: sent.message_id,
+    expiresAt: expiresAt.getTime(),
+    baseText,
+    keyboard,
+    kind: "topup",
+    topupInvoiceId: invoice!.id,
+  });
 }
 
-function buildInvoiceText(eurAmount: number, solAmount: number, expiresAt: Date): string {
+function buildInvoiceText(eurAmount: number, solAmount: number): string {
   return (
     `🧾 <b>Top-Up Invoice</b>\n\n` +
     `💶 Amount: <b>${formatEur(eurAmount)}</b>\n` +
@@ -105,7 +124,6 @@ function buildInvoiceText(eurAmount: number, solAmount: number, expiresAt: Date)
     `Send exactly:\n<code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${SOL_WALLET}</code>\n` +
     `────────────────────────\n` +
-    `⏳ Expires: ${formatDate(expiresAt)}\n\n` +
     `💡 Sending a little more is fine — the full received amount will be credited to your balance.\n` +
     `✅ Press <b>Check Payment</b> after sending.`
   );
@@ -139,6 +157,7 @@ export async function checkTopUpPayment(
       .update(topupInvoicesTable)
       .set({ status: "expired" })
       .where(eq(topupInvoicesTable.id, invoiceId));
+    cancelPendingInvoice(telegramId);
     ctx.session.data = undefined;
     await ctx.answerCbQuery("Invoice expired. Please start a new top-up.", { show_alert: true });
     await ctx.editMessageText(
@@ -153,8 +172,8 @@ export async function checkTopUpPayment(
     return;
   }
 
-  await ctx.answerCbQuery("Checking blockchain…");
-
+  // The global callback_query middleware already answered this callback, so the
+  // loading spinner is dismissed; the live ticker keeps the countdown moving.
   const expectedSol = Number(invoice.solAmount);
   const createdAtMs = invoice.createdAt.getTime();
 
@@ -259,6 +278,7 @@ export async function checkTopUpPayment(
         }
         if (!credited) continue;
 
+        cancelPendingInvoice(telegramId);
         ctx.session.data = undefined;
 
         await ctx.editMessageText(
@@ -275,31 +295,8 @@ export async function checkTopUpPayment(
       }
     }
 
-    const remaining = Math.max(0, Math.floor((invoice.expiresAt.getTime() - Date.now()) / 1000));
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-
-    await ctx
-      .editMessageText(
-        buildInvoiceText(
-          Number(invoice.eurAmount),
-          Number(invoice.solAmount),
-          invoice.expiresAt
-        ),
-        {
-          parse_mode: "HTML",
-          ...inlineKeyboard([
-            [
-              {
-                text: `🔄 Check Again (${mins}:${secs.toString().padStart(2, "0")} left)`,
-                callback_data: "topup:check",
-              },
-            ],
-            [{ text: "❌ Cancel", callback_data: "topup:cancel" }],
-          ]),
-        }
-      )
-      .catch(() => {});
+    // No payment found yet. The background ticker keeps the countdown live,
+    // so there is nothing to re-render here — just leave the invoice ticking.
   } catch {
     await ctx
       .reply("⚠️ Could not reach Solana network. Please try again.")
@@ -308,6 +305,7 @@ export async function checkTopUpPayment(
 }
 
 export async function cancelTopUp(ctx: Context & { session: BotSession }) {
+  cancelPendingInvoice(ctx.from!.id);
   const invoiceId = ctx.session.data?.["topupInvoiceId"] as number | undefined;
   if (invoiceId) {
     await db

@@ -124,6 +124,7 @@ export const COMMS_KB = inlineKeyboard([
 
 export const TOOLS_KB = inlineKeyboard([
   [{ text: "🖼 Set Bot Media", callback_data: "tools:set_media" }],
+  [{ text: "🚫 Remove Bot Media", callback_data: "tools:remove_media" }],
   [{ text: "🗑 Clear Reservations", callback_data: "tools:clear_res" }],
   [{ text: "💳 Payment Recovery", callback_data: "tools:payment_recovery" }],
   [{ text: "↩ Product Refund", callback_data: "tools:refund" }],

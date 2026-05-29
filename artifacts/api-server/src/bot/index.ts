@@ -1840,6 +1840,9 @@ export function createBot(token?: string): Telegraf {
   });
 
   bot.catch((err: any) => {
+    const description: string = err?.response?.description ?? err?.message ?? "";
+    // Benign: re-rendering a menu with identical content. Nothing to do.
+    if (/message is not modified/i.test(description)) return;
     logger.error({ err }, "Bot error");
   });
 

@@ -62,6 +62,11 @@ import {
   showManageProdTypes,
   showProductList,
   deleteAllProducts,
+  showReassignSourceTypes,
+  showReassignDestTypes,
+  doReassignType,
+  showBulkPriceTypes,
+  applyBulkPrice,
 } from "./handlers/admin-products";
 import {
   showUsersMenu,
@@ -567,6 +572,16 @@ export function createBot(): Telegraf {
         );
       } catch {}
       await showToolsMenu(ctx);
+      return;
+    }
+
+    if (step === "admin:bulk_price") {
+      const typeId = ctx.session.data?.typeId as number | undefined;
+      const newPrice = parseFloat(text.trim().replace(",", "."));
+      if (typeId === undefined || isNaN(newPrice) || newPrice <= 0) {
+        return ctx.reply("Enter a valid price, e.g. 25.00");
+      }
+      await applyBulkPrice(ctx, typeId, newPrice);
       return;
     }
 
@@ -1081,13 +1096,17 @@ export function createBot(): Telegraf {
             ...inlineKeyboard([[BACK_BTN("admin:products")]]),
           });
         }
-        if (sub === "bulk_price") {
+        if (sub === "reassign") return showReassignSourceTypes(ctx);
+        if (sub === "reassign_from")
+          return showReassignDestTypes(ctx, parseInt(parts[1]!));
+        if (sub === "reassign_to")
+          return doReassignType(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
+        if (sub === "bulk_price") return showBulkPriceTypes(ctx);
+        if (sub === "bulk_price_type") {
+          ctx.session.step = "admin:bulk_price";
+          ctx.session.data = { typeId: parseInt(parts[1]!) };
           return ctx.editMessageText(
-            "💰 <b>Bulk Price Edit</b>\n\nTo change prices, delete products and re-upload at new price.",
-            {
-              parse_mode: "HTML",
-              ...inlineKeyboard([[BACK_BTN("admin:products")]]),
-            },
+            "💰 Enter the new price (EUR) to apply to all available products of this type:",
           );
         }
         return;

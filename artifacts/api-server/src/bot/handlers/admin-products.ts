@@ -299,3 +299,151 @@ export async function deleteAllProducts(
   await ctx.answerCbQuery(`Deleted ${result.length} products.`);
   await showManageProducts(ctx);
 }
+
+export async function showReassignSourceTypes(
+  ctx: Context & { session: BotSession }
+) {
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
+  const types = await getProductTypes();
+  if (types.length < 2) {
+    await ctx.editMessageText(
+      "You need at least 2 product types to reassign.",
+      { ...inlineKeyboard([[BACK_BTN("admin:products")]]) }
+    );
+    return;
+  }
+  const rows = [];
+  for (const t of types) {
+    const [c] = await db
+      .select({ count: count() })
+      .from(productsTable)
+      .where(
+        and(
+          eq(productsTable.typeId, t.id),
+          eq(productsTable.status, "available")
+        )
+      );
+    rows.push([
+      {
+        text: `${t.emoji} ${t.name} (${c?.count ?? 0})`,
+        callback_data: `prod:reassign_from:${t.id}`,
+      },
+    ]);
+  }
+  await ctx.editMessageText(
+    "🔀 <b>Reassign Product Type</b>\n\nSelect the type to move products <b>from</b>:",
+    {
+      parse_mode: "HTML",
+      ...inlineKeyboard([...rows, [BACK_BTN("admin:products")]]),
+    }
+  );
+}
+
+export async function showReassignDestTypes(
+  ctx: Context & { session: BotSession },
+  fromTypeId: number
+) {
+  const types = (await getProductTypes()).filter((t) => t.id !== fromTypeId);
+  const from = await db
+    .select()
+    .from(productTypesTable)
+    .where(eq(productTypesTable.id, fromTypeId))
+    .then((r) => r[0]);
+  const rows = types.map((t) => [
+    {
+      text: `${t.emoji} ${t.name}`,
+      callback_data: `prod:reassign_to:${fromTypeId}:${t.id}`,
+    },
+  ]);
+  await ctx.editMessageText(
+    `🔀 <b>Reassign from ${from?.emoji ?? ""} ${from?.name ?? "?"}</b>\n\nSelect the type to move products <b>to</b>:`,
+    {
+      parse_mode: "HTML",
+      ...inlineKeyboard([...rows, [BACK_BTN("prod:reassign")]]),
+    }
+  );
+}
+
+export async function doReassignType(
+  ctx: Context & { session: BotSession },
+  fromTypeId: number,
+  toTypeId: number
+) {
+  const result = await db
+    .update(productsTable)
+    .set({ typeId: toTypeId })
+    .where(
+      and(
+        eq(productsTable.typeId, fromTypeId),
+        eq(productsTable.status, "available")
+      )
+    )
+    .returning({ id: productsTable.id });
+  await ctx.answerCbQuery(`Reassigned ${result.length} products.`, {
+    show_alert: true,
+  });
+  await showProductsMenu(ctx);
+}
+
+export async function showBulkPriceTypes(
+  ctx: Context & { session: BotSession }
+) {
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
+  const types = await getProductTypes();
+  if (types.length === 0) {
+    await ctx.editMessageText("No product types available.", {
+      ...inlineKeyboard([[BACK_BTN("admin:products")]]),
+    });
+    return;
+  }
+  const rows = [];
+  for (const t of types) {
+    const [c] = await db
+      .select({ count: count() })
+      .from(productsTable)
+      .where(
+        and(
+          eq(productsTable.typeId, t.id),
+          eq(productsTable.status, "available")
+        )
+      );
+    rows.push([
+      {
+        text: `${t.emoji} ${t.name} (${c?.count ?? 0})`,
+        callback_data: `prod:bulk_price_type:${t.id}`,
+      },
+    ]);
+  }
+  await ctx.editMessageText(
+    "💰 <b>Bulk Edit Prices</b>\n\nSelect the product type whose prices you want to change:",
+    {
+      parse_mode: "HTML",
+      ...inlineKeyboard([...rows, [BACK_BTN("admin:products")]]),
+    }
+  );
+}
+
+export async function applyBulkPrice(
+  ctx: Context & { session: BotSession },
+  typeId: number,
+  newPrice: number
+) {
+  const result = await db
+    .update(productsTable)
+    .set({ price: newPrice.toFixed(2) })
+    .where(
+      and(
+        eq(productsTable.typeId, typeId),
+        eq(productsTable.status, "available")
+      )
+    )
+    .returning({ id: productsTable.id });
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
+  await ctx.reply(
+    `✅ Updated price to ${formatEur(newPrice.toFixed(2))} for ${result.length} product(s).`
+  );
+  await showProductsMenu(ctx);
+}

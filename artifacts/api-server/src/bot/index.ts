@@ -802,6 +802,38 @@ export function createBot(): Telegraf {
     const step = ctx.session.step as string | undefined;
     const data = (ctx.session.data ?? {}) as Record<string, any>;
 
+    if (step === "admin:set_home_media") {
+      if (!(await isAdmin(ctx.from.id))) return;
+      const msg = ctx.message as any;
+      let mediaFileId: string | undefined;
+      let mediaType: string | undefined;
+      if (msg?.animation) {
+        mediaFileId = msg.animation.file_id;
+        mediaType = "animation";
+      } else if (msg?.video) {
+        mediaFileId = msg.video.file_id;
+        mediaType = "video";
+      } else if (msg?.photo?.length) {
+        mediaFileId = msg.photo[msg.photo.length - 1].file_id;
+        mediaType = "photo";
+      } else if (msg?.document) {
+        mediaFileId = msg.document.file_id;
+        mediaType = "photo";
+      }
+      if (!mediaFileId) {
+        await ctx.reply("Please send a GIF, photo, or video file.");
+        return;
+      }
+      await setSetting("home_media_file_id", mediaFileId);
+      await setSetting("home_media_type", mediaType!);
+      ctx.session.step = undefined;
+      await ctx.reply(
+        "✅ Home screen media updated! It will show on the next /start.",
+      );
+      await showToolsMenu(ctx);
+      return;
+    }
+
     const validSteps = [
       "admin:add_product:content",
       "admin:add_product:more_files",

@@ -1,8 +1,8 @@
 import { Context } from "telegraf";
 import { BotSession } from "../session";
 import { db } from "@workspace/db";
-import { usersTable, topupInvoicesTable } from "@workspace/db";
-import { eq, and, gt } from "drizzle-orm";
+import { usersTable, topupInvoicesTable, paymentReceiptsTable } from "@workspace/db";
+import { eq, and, gt, sql } from "drizzle-orm";
 import { formatEur, addMinutes, formatDate } from "../utils";
 import { inlineKeyboard, BACK_BTN, editOrReplace } from "../keyboards";
 import { getSolPrice, SOL_WALLET } from "./payments";
@@ -179,13 +179,6 @@ export async function checkTopUpPayment(
       if (sig.err) continue;
       if (sig.blockTime && sig.blockTime * 1000 < createdAtMs - 120_000) continue;
 
-      const existingUse = await db
-        .select()
-        .from(topupInvoicesTable)
-        .where(eq(topupInvoicesTable.txSignature, sig.signature))
-        .then((r) => r[0]);
-      if (existingUse) continue;
-
       const txCtrl = new AbortController();
       setTimeout(() => txCtrl.abort(), 12000);
       const txRes = await fetch(SOL_RPC, {
@@ -218,17 +211,53 @@ export async function checkTopUpPayment(
         const solPrice = await getSolPrice();
         const creditedEur = solPrice > 0 ? receivedSol * solPrice : Number(invoice.eurAmount);
 
-        await db
-          .update(topupInvoicesTable)
-          .set({ status: "completed", txSignature: sig.signature })
-          .where(eq(topupInvoicesTable.id, invoiceId));
+        // Verify + credit atomically. The idempotent invoice completion, the
+        // one-time signature claim (UNIQUE on bot_payment_receipts), and the
+        // balance credit all commit together or not at all — so a claimed
+        // signature can never be left without a matching credit, and a single
+        // payment can never be credited twice.
+        let newBalance = 0;
+        let credited = false;
+        try {
+          credited = await db.transaction(async (tx) => {
+            const updated = await tx
+              .update(topupInvoicesTable)
+              .set({ status: "completed", txSignature: sig.signature })
+              .where(
+                and(
+                  eq(topupInvoicesTable.id, invoiceId),
+                  eq(topupInvoicesTable.status, "pending"),
+                ),
+              )
+              .returning({ id: topupInvoicesTable.id });
+            if (updated.length === 0) return false;
 
-        const user = await getUser(telegramId);
-        const newBalance = Number(user?.balance ?? 0) + creditedEur;
-        await db
-          .update(usersTable)
-          .set({ balance: newBalance.toFixed(2) })
-          .where(eq(usersTable.telegramId, telegramId));
+            const claimRows = await tx
+              .insert(paymentReceiptsTable)
+              .values({
+                txSignature: sig.signature,
+                userId: telegramId,
+                kind: "topup",
+                receivedSol: receivedSol.toFixed(9),
+              })
+              .onConflictDoNothing({ target: paymentReceiptsTable.txSignature })
+              .returning({ id: paymentReceiptsTable.id });
+            // Signature already consumed elsewhere — abort and roll back the
+            // invoice completion so nothing is credited.
+            if (claimRows.length === 0) throw new Error("signature-already-claimed");
+
+            const [u] = await tx
+              .update(usersTable)
+              .set({ balance: sql`${usersTable.balance} + ${creditedEur}` })
+              .where(eq(usersTable.telegramId, telegramId))
+              .returning({ balance: usersTable.balance });
+            newBalance = Number(u?.balance ?? 0);
+            return true;
+          });
+        } catch {
+          credited = false;
+        }
+        if (!credited) continue;
 
         ctx.session.data = undefined;
 

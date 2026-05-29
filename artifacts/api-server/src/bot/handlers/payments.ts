@@ -10,6 +10,7 @@ import {
   productTypesTable,
   citiesTable,
   districtsTable,
+  paymentReceiptsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { formatEur, generateQueueId, addMinutes, formatDate } from "../utils";
@@ -263,13 +264,23 @@ export async function checkSolPayment(
       const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
 
       if (receivedSol >= expectedSol * 0.99) {
+        // Atomically claim this transaction. If another handler already
+        // consumed it (purchase or top-up), skip it — never credit twice.
+        const claimed = await claimSignature(
+          sig.signature,
+          ctx.from!.id,
+          "purchase",
+          receivedSol,
+        );
+        if (!claimed) continue;
+
         const solPrice = await getSolPrice();
         const paidEur = receivedSol * solPrice;
         const expectedEur = Number(
           data["discountedTotal"] ?? data["pendingEur"] ?? 0,
         );
         const overpayEur = Math.max(0, paidEur - expectedEur);
-        await completePurchase(ctx, "sol", overpayEur);
+        await completePurchase(ctx, "sol", overpayEur, sig.signature);
         return;
       }
     }
@@ -290,10 +301,35 @@ export async function checkSolPayment(
   }
 }
 
+// Atomically claim an on-chain Solana transaction signature so it can be
+// credited exactly once across every flow (purchase or top-up). Relies on the
+// UNIQUE constraint on bot_payment_receipts.tx_signature: the INSERT either
+// wins (returns true) or conflicts because another concurrent handler already
+// claimed it (returns false). This closes the read-then-act race.
+export async function claimSignature(
+  signature: string,
+  userId: number,
+  kind: "purchase" | "topup",
+  receivedSol: number,
+): Promise<boolean> {
+  const rows = await db
+    .insert(paymentReceiptsTable)
+    .values({
+      txSignature: signature,
+      userId,
+      kind,
+      receivedSol: receivedSol.toFixed(9),
+    })
+    .onConflictDoNothing({ target: paymentReceiptsTable.txSignature })
+    .returning({ id: paymentReceiptsTable.id });
+  return rows.length > 0;
+}
+
 export async function completePurchase(
   ctx: Context & { session: BotSession },
   paymentMethod: string,
   overpayEur = 0,
+  txSignature?: string,
 ): Promise<void> {
   const telegramId = ctx.from!.id;
   cancelPendingInvoice(telegramId);
@@ -328,9 +364,22 @@ export async function completePurchase(
   } else {
     const basketItems = await getUserBasket(telegramId);
     if (basketItems.length === 0) {
+      // The on-chain payment was already claimed upstream, so we must not
+      // silently drop the funds — credit everything paid to the balance.
+      const refundTotal = discountedTotal + overpayEur;
+      if (refundTotal > 0) {
+        await db
+          .update(usersTable)
+          .set({ balance: sql`${usersTable.balance} + ${refundTotal}` })
+          .where(eq(usersTable.telegramId, telegramId));
+      }
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
       if (ctx.callbackQuery) {
         await ctx.editMessageText(
-          "⚠️ Basket is empty. Please add items and try again.",
+          refundTotal > 0
+            ? "⚠️ Your basket was empty, so your payment was added to your balance."
+            : "⚠️ Basket is empty. Please add items and try again.",
           {
             ...inlineKeyboard([
               [{ text: "🏠 Home", callback_data: "shop:home" }],
@@ -384,6 +433,7 @@ export async function completePurchase(
       pricePaid: spec.price.toFixed(2),
       discountCodeUsed: discountCode,
       paymentMethod,
+      txSignature,
     });
     purchased.push({ productId: row.id, size: row.size, queueId, pricePaid: spec.price });
   }

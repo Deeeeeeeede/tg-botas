@@ -99,7 +99,20 @@ export const purchasesTable = pgTable("bot_purchases", {
   pricePaid: numeric("price_paid", { precision: 10, scale: 2 }).notNull(),
   discountCodeUsed: text("discount_code_used"),
   paymentMethod: text("payment_method").notNull().default("balance"),
+  txSignature: text("tx_signature"),
   refunded: boolean("refunded").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// One row per consumed on-chain Solana transaction. The UNIQUE constraint on
+// tx_signature is the authoritative, atomic guard that a single payment can be
+// credited at most once across every flow (product purchase or balance top-up).
+export const paymentReceiptsTable = pgTable("bot_payment_receipts", {
+  id: serial("id").primaryKey(),
+  txSignature: text("tx_signature").notNull().unique(),
+  userId: bigint("user_id", { mode: "number" }).notNull(),
+  kind: text("kind").notNull(),
+  receivedSol: numeric("received_sol", { precision: 18, scale: 9 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

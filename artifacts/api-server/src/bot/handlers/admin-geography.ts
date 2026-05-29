@@ -50,6 +50,7 @@ export async function showCityDetail(
   ctx: Context & { session: BotSession },
   cityId: number
 ) {
+  ctx.session.step = undefined;
   const city = await db
     .select()
     .from(citiesTable)

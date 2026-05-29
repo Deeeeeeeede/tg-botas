@@ -28,6 +28,7 @@ export async function showProductsMenu(ctx: Context & { session: BotSession }) {
 }
 
 export async function showProductTypes(ctx: Context & { session: BotSession }) {
+  ctx.session.step = undefined;
   const types = await getProductTypes();
   const kb = inlineKeyboard([
     ...types.map((t) => [

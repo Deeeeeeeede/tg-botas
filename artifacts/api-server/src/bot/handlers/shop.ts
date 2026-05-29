@@ -467,10 +467,11 @@ export async function showShopSizes(
         },
         { isReseller: user.isReseller, tierName: user.tierName }
       );
+      const stockNote = ` · ${s.count} left`;
       const label =
         priceResult.final === priceResult.original
-          ? `${s.size} ${formatEur(priceResult.final)}`
-          : `${s.size} ${formatEur(priceResult.final)} (was ${formatEur(priceResult.original)}) ${priceResult.discountBadges.join("")}`;
+          ? `${s.size} ${formatEur(priceResult.final)}${stockNote}`
+          : `${s.size} ${formatEur(priceResult.final)} (was ${formatEur(priceResult.original)}) ${priceResult.discountBadges.join("")}${stockNote}`;
       return [
         {
           text: label,
@@ -560,10 +561,25 @@ export async function showSizeDetail(
     priceText += ` <s>${formatEur(priceResult.original)}</s> ${priceResult.discountBadges.join("")}`;
   }
 
+  const [stockRow] = await db
+    .select({ count: count() })
+    .from(productsTable)
+    .where(
+      and(
+        eq(productsTable.cityId, cityId),
+        eq(productsTable.districtId, districtId),
+        eq(productsTable.typeId, typeId),
+        eq(productsTable.size, size),
+        eq(productsTable.status, "available")
+      )
+    );
+  const stockCount = stockRow?.count ?? 0;
+
   const text =
     `🏙 <b>${city?.name ?? "?"}</b> | 🏠 <b>${district?.name ?? "?"}</b>\n` +
     `${type?.emoji ?? "💎"} <b>${type?.name ?? "?"} - ${size}</b>\n` +
-    priceText;
+    priceText +
+    `\n📦 In stock: <b>${stockCount}</b>`;
 
   const kb = inlineKeyboard([
     [
@@ -684,6 +700,7 @@ export async function payNow(
 export async function showPaymentSummary(
   ctx: Context & { session: BotSession }
 ) {
+  ctx.session.step = undefined;
   const telegramId = ctx.from!.id;
   const data = ctx.session.data ?? {};
   const user = await getUser(telegramId);
@@ -821,6 +838,7 @@ export async function doPayNow(ctx: Context & { session: BotSession }) {
 }
 
 export async function showBasket(ctx: Context & { session: BotSession }) {
+  ctx.session.step = undefined;
   const telegramId = ctx.from!.id;
   const user = await getUser(telegramId);
   if (!user) return;
@@ -1077,6 +1095,7 @@ export async function showTopUp(ctx: Context & { session: BotSession }) {
 }
 
 export async function showReviewsMenu(ctx: Context & { session: BotSession }) {
+  ctx.session.step = undefined;
   const kb = inlineKeyboard([
     [{ text: "👀 View Reviews", callback_data: "shop:view_reviews" }],
     [{ text: "✍ Leave a Review", callback_data: "shop:review_prompt" }],

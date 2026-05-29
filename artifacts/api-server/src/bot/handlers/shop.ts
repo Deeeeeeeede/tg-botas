@@ -209,7 +209,7 @@ export async function showPriceList(ctx: Context & { session: BotSession }) {
       }
       text += `  🏠 <b>${district.name}</b>:\n`;
       for (const row of rows) {
-        text += `    • ${row.typeEmoji} ${row.typeName} ${row.size} — ${formatEur(row.price)}\n`;
+        text += `    • ${row.typeEmoji} ${row.typeName} ${row.size} (${formatEur(row.price)})  × ${row.cnt}\n`;
       }
     }
     if (cityHasProducts) text += "\n";

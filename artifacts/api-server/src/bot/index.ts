@@ -153,11 +153,11 @@ import {
 import { formatEur } from "./utils";
 import { inlineKeyboard, BACK_BTN } from "./keyboards";
 
-export function createBot(): Telegraf {
-  const token = process.env["BOT_TOKEN"];
-  if (!token) throw new Error("BOT_TOKEN environment variable is required");
+export function createBot(token?: string): Telegraf {
+  const botToken = token ?? process.env["BOT_TOKEN"];
+  if (!botToken) throw new Error("BOT_TOKEN environment variable is required");
 
-  const bot = new Telegraf(token);
+  const bot = new Telegraf(botToken);
 
   bot.use(
     session({

@@ -68,6 +68,7 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 ## Architecture decisions
 
 - Bot runs in the same process as the Express API server (long polling, not webhook)
+- Automatic token failover: on startup the bot tries the main `BOT_TOKEN` first, then saved backup tokens (Tools → Backup Tokens). A health check (`getMe` every 60s) detects a revoked/deleted token (401/404) and relaunches on the next available token. The active token is flagged `[ACTIVE]` in the backup tokens list. Note: a backup bot has a different @username, so customers must open the new bot link — but all data is shared via the same database.
 - Session state stored in memory (Telegraf built-in session)
 - Price calculation applies discounts in order: fire (sale) → crown (reseller) → trophy (tier rule) → tier global % → discount code
 - Workers use `/klad` and can only upload to existing city/district/type/size combinations

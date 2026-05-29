@@ -1,5 +1,6 @@
 import { InlineKeyboardMarkup } from "telegraf/types";
 import { chunk } from "./utils";
+import { logger } from "../lib/logger";
 
 export type IKButton = { text: string; callback_data: string };
 
@@ -28,6 +29,35 @@ export const BACK_BTN = (target: string): IKButton => ({
   text: "« Back",
   callback_data: target,
 });
+
+// Render a screen by editing the current message when possible. If the current
+// message cannot be edited (e.g. it is a photo/video/animation message such as
+// the home screen with a media banner), delete it and send a fresh text message.
+export async function editOrReplace(
+  ctx: any,
+  text: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  if (ctx.callbackQuery) {
+    try {
+      await ctx.editMessageText(text, extra);
+      return;
+    } catch (err) {
+      const description: string =
+        (err as { description?: string })?.description ?? String(err);
+      const isUneditable =
+        /no text in the message to edit/i.test(description) ||
+        /message can't be edited/i.test(description) ||
+        /message to edit not found/i.test(description);
+      if (!isUneditable) {
+        // Unexpected edit failure (bad payload, API error) — surface it.
+        logger.warn({ err }, "editMessageText failed; falling back to reply");
+      }
+      await ctx.deleteMessage().catch(() => {});
+    }
+  }
+  await ctx.reply(text, extra);
+}
 
 export const CANCEL_BTN: IKButton = {
   text: "✖ Cancel",

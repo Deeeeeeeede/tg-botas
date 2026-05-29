@@ -4,7 +4,7 @@ import { db } from "@workspace/db";
 import { usersTable, topupInvoicesTable } from "@workspace/db";
 import { eq, and, gt } from "drizzle-orm";
 import { formatEur, addMinutes, formatDate } from "../utils";
-import { inlineKeyboard, BACK_BTN } from "../keyboards";
+import { inlineKeyboard, BACK_BTN, editOrReplace } from "../keyboards";
 import { getSolPrice, SOL_WALLET } from "./payments";
 import { getUser } from "../db";
 
@@ -29,17 +29,10 @@ export async function showTopUpMenu(ctx: Context & { session: BotSession }) {
 
   ctx.session.step = "topup:enter_amount";
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
-  } else {
-    await ctx.reply(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
-  }
+  await editOrReplace(ctx, text, {
+    parse_mode: "HTML",
+    ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+  });
 }
 
 export async function handleTopUpAmount(

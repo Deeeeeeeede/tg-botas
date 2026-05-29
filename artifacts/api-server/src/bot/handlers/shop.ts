@@ -29,7 +29,7 @@ import {
 } from "../db";
 import { calculatePrice } from "../pricing";
 import { formatEur, formatDate, generateQueueId } from "../utils";
-import { inlineKeyboard, BACK_BTN } from "../keyboards";
+import { inlineKeyboard, BACK_BTN, editOrReplace } from "../keyboards";
 import {
   completePurchase,
   showCryptoMenu,
@@ -154,17 +154,13 @@ export async function showProfile(ctx: Context & { session: BotSession }) {
     [{ text: "🏠 Home", callback_data: "shop:home" }],
   ]);
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, { parse_mode: "HTML", ...profileKb });
-  } else {
-    await ctx.reply(text, { parse_mode: "HTML", ...profileKb });
-  }
+  await editOrReplace(ctx, text, { parse_mode: "HTML", ...profileKb });
 }
 
 export async function showPriceList(ctx: Context & { session: BotSession }) {
   const cities = await getCities();
   if (cities.length === 0) {
-    await ctx.editMessageText("No products available.", {
+    await editOrReplace(ctx, "No products available.", {
       ...inlineKeyboard([[BACK_BTN("shop:home")]]),
     });
     return;
@@ -223,23 +219,17 @@ export async function showPriceList(ctx: Context & { session: BotSession }) {
     text += "No products available right now.";
   }
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
-  } else {
-    await ctx.reply(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
-  }
+  await editOrReplace(ctx, text, {
+    parse_mode: "HTML",
+    ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+  });
 }
 
 export async function showShopCities(ctx: Context & { session: BotSession }) {
   const cities = await getCities();
   if (cities.length === 0) {
-    await ctx.editMessageText(
+    await editOrReplace(
+      ctx,
       "No products available right now. Check back soon!",
       { ...inlineKeyboard([[BACK_BTN("shop:home")]]) }
     );
@@ -251,7 +241,7 @@ export async function showShopCities(ctx: Context & { session: BotSession }) {
     ]),
     [{ text: "🏠 Home", callback_data: "shop:home" }],
   ]);
-  await ctx.editMessageText("🏙 <b>Choose a City</b>\n\nSelect your location:", {
+  await editOrReplace(ctx, "🏙 <b>Choose a City</b>\n\nSelect your location:", {
     parse_mode: "HTML",
     ...kb,
   });
@@ -1081,17 +1071,10 @@ export async function showTopUp(ctx: Context & { session: BotSession }) {
     `◎ <b>Solana (SOL)</b> wallet:\n<code>HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59</code>\n\n` +
     `Send any amount and contact admin with your Telegram ID (<code>${telegramId}</code>) for manual top-up confirmation.`;
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
-  } else {
-    await ctx.reply(text, {
-      parse_mode: "HTML",
-      ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-    });
-  }
+  await editOrReplace(ctx, text, {
+    parse_mode: "HTML",
+    ...inlineKeyboard([[BACK_BTN("shop:home")]]),
+  });
 }
 
 export async function showReviewsMenu(ctx: Context & { session: BotSession }) {
@@ -1101,14 +1084,10 @@ export async function showReviewsMenu(ctx: Context & { session: BotSession }) {
     [{ text: "✍ Leave a Review", callback_data: "shop:review_prompt" }],
     [{ text: "🏠 Home", callback_data: "shop:home" }],
   ]);
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText("📝 <b>Reviews Menu</b>", {
-      parse_mode: "HTML",
-      ...kb,
-    });
-  } else {
-    await ctx.reply("📝 <b>Reviews Menu</b>", { parse_mode: "HTML", ...kb });
-  }
+  await editOrReplace(ctx, "📝 <b>Reviews Menu</b>", {
+    parse_mode: "HTML",
+    ...kb,
+  });
 }
 
 export async function showCustomerReviews(

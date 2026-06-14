@@ -7,7 +7,7 @@ import { formatEur, addMinutes } from "../utils";
 import { inlineKeyboard, BACK_BTN, editOrReplace } from "../keyboards";
 import {
   getSolPrice,
-  SOL_WALLET,
+  getSolWallet,
   registerPendingInvoice,
   cancelPendingInvoice,
   countdownLine,
@@ -91,7 +91,7 @@ export async function handleTopUpAmount(
   ctx.session.step = undefined;
   ctx.session.data = { topupInvoiceId: invoice!.id };
 
-  const baseText = buildInvoiceText(eurAmount, solAmount);
+  const baseText = await buildInvoiceText(eurAmount, solAmount);
   const keyboard = [
     [{ text: "✅ Check Payment", callback_data: "topup:check" }],
     [{ text: "❌ Cancel", callback_data: "topup:cancel" }],
@@ -116,13 +116,14 @@ export async function handleTopUpAmount(
   });
 }
 
-function buildInvoiceText(eurAmount: number, solAmount: number): string {
+async function buildInvoiceText(eurAmount: number, solAmount: number): Promise<string> {
+  const wallet = await getSolWallet();
   return (
     `🧾 <b>Top-Up Invoice</b>\n\n` +
     `💶 Amount: <b>${formatEur(eurAmount)}</b>\n` +
     `────────────────────────\n` +
     `Send exactly:\n<code>${solAmount}</code> SOL\n\n` +
-    `To address:\n<code>${SOL_WALLET}</code>\n` +
+    `To address:\n<code>${wallet}</code>\n` +
     `────────────────────────\n` +
     `💡 Sending a little more is fine — the full received amount will be credited to your balance.\n` +
     `✅ Press <b>Check Payment</b> after sending.`
@@ -187,7 +188,7 @@ export async function checkTopUpPayment(
         jsonrpc: "2.0",
         id: 1,
         method: "getSignaturesForAddress",
-        params: [SOL_WALLET, { limit: 30 }],
+        params: [(await getSolWallet()), { limit: 30 }],
       }),
       signal: sigCtrl.signal,
     });
@@ -219,7 +220,7 @@ export async function checkTopUpPayment(
       if (!tx) continue;
 
       const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
-      const walletIndex = accountKeys.indexOf(SOL_WALLET);
+      const walletIndex = accountKeys.indexOf(await getSolWallet());
       if (walletIndex === -1) continue;
 
       const pre = tx.meta?.preBalances?.[walletIndex] ?? 0;

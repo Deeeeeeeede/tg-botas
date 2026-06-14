@@ -133,6 +133,7 @@ export const TOOLS_KB = inlineKeyboard([
   [{ text: "↩ Product Refund", callback_data: "tools:refund" }],
   [{ text: "🔑 Backup Tokens", callback_data: "tools:backup_tokens" }],
   [{ text: "➕ Add Balance to User", callback_data: "tools:add_balance" }],
+  [{ text: "🪙 Change SOL Wallet", callback_data: "tools:change_wallet" }],
   [BACK_BTN("admin:main")],
 ]);
 

@@ -18,8 +18,32 @@ import { formatEur, generateQueueId, addMinutes, formatDate } from "../utils";
 import { getUser, getUserBasket, releaseBasket, updateUserTier } from "../db";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
 
-export const SOL_WALLET = "HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59";
+const DEFAULT_SOL_WALLET = "HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59";
 const SOL_RPC = "https://api.mainnet-beta.solana.com";
+
+let solWalletCache: string | null = null;
+let solWalletCacheTs = 0;
+
+export async function getSolWallet(): Promise<string> {
+  const now = Date.now();
+  if (solWalletCache && now - solWalletCacheTs < 30_000) {
+    return solWalletCache;
+  }
+  const { getSetting } = await import("../db");
+  const saved = await getSetting("sol_wallet");
+  const wallet = saved || DEFAULT_SOL_WALLET;
+  solWalletCache = wallet;
+  solWalletCacheTs = now;
+  return wallet;
+}
+
+export function clearSolWalletCache() {
+  solWalletCache = null;
+  solWalletCacheTs = 0;
+}
+
+// Re-export for legacy compatibility during transition; prefer getSolWallet().
+export const SOL_WALLET = DEFAULT_SOL_WALLET;
 
 type InlineKb = { text: string; callback_data: string }[][];
 type LiveInvoice = {
@@ -191,7 +215,7 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     `Total: <b>${formatEur(eurAmount)}</b>\n` +
     `────────────────────────\n` +
     `Send exactly: <code>${solAmount}</code> SOL\n\n` +
-    `To address:\n<code>${SOL_WALLET}</code>\n` +
+    `To address:\n<code>${(await getSolWallet())}</code>\n` +
     `────────────────────────\n` +
     `💡 Sending a little more is fine — any overpay goes to your balance.`;
 
@@ -273,7 +297,7 @@ export async function checkSolPayment(
         jsonrpc: "2.0",
         id: 1,
         method: "getSignaturesForAddress",
-        params: [SOL_WALLET, { limit: 25 }],
+        params: [(await getSolWallet()), { limit: 25 }],
       }),
       signal: sigCtrl.signal,
     }).finally(() => clearTimeout(sigTimer));
@@ -305,7 +329,7 @@ export async function checkSolPayment(
       if (!tx) continue;
 
       const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
-      const walletIndex = accountKeys.indexOf(SOL_WALLET);
+      const walletIndex = accountKeys.indexOf(await getSolWallet());
       if (walletIndex === -1) continue;
 
       const pre = tx.meta?.preBalances?.[walletIndex] ?? 0;

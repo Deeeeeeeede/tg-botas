@@ -15,7 +15,7 @@ import {
   BACK_BTN,
 } from "../keyboards";
 import { formatEur, formatDate } from "../utils";
-import { clearExpiredReservations } from "../db";
+import { clearExpiredReservations, getSetting, setSetting } from "../db";
 
 export async function showToolsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
@@ -122,6 +122,52 @@ export async function doRefund(ctx: Context & { session: BotSession }, purchaseI
     `Refunded ${formatEur(purchase.pricePaid)} to user ${purchase.userId}.`,
     { show_alert: true }
   );
+  await showToolsMenu(ctx);
+}
+
+export async function showChangeWallet(ctx: Context & { session: BotSession }) {
+  const current = await getSetting("sol_wallet") ?? "Default wallet";
+  const text = `
+🪙 <b>Change SOL Wallet</b>
+
+Current: <code>${current}</code>
+
+Send a new Solana address to update it. The default is used if none is set.`;
+  ctx.session.step = "admin:change_wallet";
+  await ctx.editMessageText(text, {
+    parse_mode: "HTML",
+    ...inlineKeyboard([
+      [{ text: "↩ Reset to Default", callback_data: "tools:reset_wallet" }],
+      [BACK_BTN("admin:tools")],
+    ]),
+  });
+}
+
+export async function doChangeWallet(ctx: Context & { session: BotSession }, input: string) {
+  const address = input.trim();
+  const isValid = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+  if (!isValid) {
+    await ctx.reply("❌ Invalid Solana address format. Please enter a valid address:", {
+      ...inlineKeyboard([
+        [{ text: "↩ Back to Tools", callback_data: "admin:tools" }],
+      ]),
+    });
+    return;
+  }
+  await setSetting("sol_wallet", address);
+  const { clearSolWalletCache } = await import("./payments");
+  clearSolWalletCache();
+  await ctx.reply(`✅ SOL wallet updated to:\n<code>${address}</code>`, {
+    parse_mode: "HTML",
+    ...inlineKeyboard([[BACK_BTN("admin:tools")]]),
+  });
+}
+
+export async function resetWalletToDefault(ctx: Context & { session: BotSession }) {
+  await setSetting("sol_wallet", "");
+  const { clearSolWalletCache } = await import("./payments");
+  clearSolWalletCache();
+  await ctx.answerCbQuery("✅ Reset to default wallet.", { show_alert: true });
   await showToolsMenu(ctx);
 }
 

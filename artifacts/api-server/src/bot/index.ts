@@ -113,6 +113,9 @@ import {
   showRecentPurchasesForRefund,
   doRefund,
   showBackupTokens,
+  showChangeWallet,
+  doChangeWallet,
+  resetWalletToDefault,
 } from "./handlers/admin-tools";
 import {
   showWorkersMenu,
@@ -613,6 +616,12 @@ export function createBot(token?: string): Telegraf {
     if (step === "admin:add_admin") {
       ctx.session.step = undefined;
       await addAdmin(ctx, text.trim());
+      return;
+    }
+
+    if (step === "admin:change_wallet") {
+      ctx.session.step = undefined;
+      await doChangeWallet(ctx, text.trim());
       return;
     }
 
@@ -1592,6 +1601,8 @@ export function createBot(token?: string): Telegraf {
             inlineKeyboard([[BACK_BTN("admin:tools")]]),
           );
         }
+        if (sub === "change_wallet") return showChangeWallet(ctx);
+        if (sub === "reset_wallet") return resetWalletToDefault(ctx);
         if (sub === "set_media") {
           ctx.session.step = "admin:set_home_media";
           return ctx.editMessageText(

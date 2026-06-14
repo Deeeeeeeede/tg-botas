@@ -233,6 +233,40 @@ export function createBot(token?: string): Telegraf {
     await showKladMenu(ctx);
   });
 
+  // Register /done BEFORE the text handler so it is intercepted as a command,
+  // not treated as a product text message when a worker is in the upload flow.
+  bot.command("done", async (ctx: any) => {
+    const step = ctx.session.step as string | undefined;
+
+    if (
+      step === "admin:add_product:more_files" ||
+      step === "admin:add_product:content"
+    ) {
+      const data = ctx.session.data ?? {};
+      const fileCount = ((data["fileCount"] as number) ?? 0) + 1;
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      await ctx.reply(
+        `✅ Lot complete. ${fileCount} file(s) saved — one buyer will receive all of them.`,
+      );
+      if (await isAdmin(ctx.from.id)) {
+        await showProductsMenu(ctx);
+      } else {
+        await showKladMenu(ctx);
+      }
+    } else if (step === "admin:add_product:bulk") {
+      const count = (ctx.session.data as any)?.["bulkCount"] ?? 0;
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      await ctx.reply(`✅ Bulk upload complete. ${count} units added.`);
+      if (await isAdmin(ctx.from.id)) {
+        await showProductsMenu(ctx);
+      } else {
+        await showKladMenu(ctx);
+      }
+    }
+  });
+
   bot.on(message("text"), async (ctx: any) => {
     const step = ctx.session.step as string | undefined;
     const data = (ctx.session.data ?? {}) as Record<string, any>;
@@ -1064,38 +1098,6 @@ export function createBot(token?: string): Telegraf {
   bot.on(message("document"), handleFileMessage);
   bot.on(message("video"), handleFileMessage);
   bot.on(message("animation"), handleFileMessage);
-
-  bot.command("done", async (ctx: any) => {
-    const step = ctx.session.step as string | undefined;
-
-    if (
-      step === "admin:add_product:more_files" ||
-      step === "admin:add_product:content"
-    ) {
-      const data = ctx.session.data ?? {};
-      const fileCount = ((data["fileCount"] as number) ?? 0) + 1;
-      ctx.session.step = undefined;
-      ctx.session.data = undefined;
-      await ctx.reply(
-        `✅ Lot complete. ${fileCount} file(s) saved — one buyer will receive all of them.`,
-      );
-      if (await isAdmin(ctx.from.id)) {
-        await showProductsMenu(ctx);
-      } else {
-        await showKladMenu(ctx);
-      }
-    } else if (step === "admin:add_product:bulk") {
-      const count = (ctx.session.data as any)?.["bulkCount"] ?? 0;
-      ctx.session.step = undefined;
-      ctx.session.data = undefined;
-      await ctx.reply(`✅ Bulk upload complete. ${count} units added.`);
-      if (await isAdmin(ctx.from.id)) {
-        await showProductsMenu(ctx);
-      } else {
-        await showKladMenu(ctx);
-      }
-    }
-  });
 
   bot.on("callback_query", async (ctx: any) => {
     const cbData: string = ctx.callbackQuery.data ?? "";

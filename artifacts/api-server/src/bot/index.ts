@@ -139,6 +139,8 @@ import {
   showShopTypes,
   showShopSizes,
   showSizeDetail,
+  refreshHome,
+  startHomeRefresher,
   addToBasket,
   payNow,
   showPaymentSummary,
@@ -781,6 +783,11 @@ export function createBot(token?: string): Telegraf {
       ctx.session.step = undefined;
       await ctx.reply("⭐ Thank you for your review!");
       await showHome(ctx);
+      // Instantly refresh the review count on all users' home screens.
+      const { getAllHomeUserIds } = await import("./handlers/shop");
+      for (const userId of getAllHomeUserIds()) {
+        await refreshHome(bot.telegram, userId).catch(() => {});
+      }
       return;
     }
 
@@ -1884,6 +1891,7 @@ export function createBot(token?: string): Telegraf {
   });
 
   startInvoiceBackgroundChecker(bot.telegram);
+  startHomeRefresher(bot.telegram);
 
   return bot;
 }

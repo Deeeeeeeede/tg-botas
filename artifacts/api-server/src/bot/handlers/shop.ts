@@ -948,6 +948,8 @@ export async function doPayNow(ctx: Context & { session: BotSession }) {
       .update(usersTable)
       .set({ balance: (Number(user.balance) - total).toFixed(2) })
       .where(eq(usersTable.telegramId, telegramId));
+    const { refreshAdminLiveStatsNow } = await import("./admin");
+    refreshAdminLiveStatsNow();
     await completePurchase(ctx, "balance");
   } else {
     const kb = inlineKeyboard([

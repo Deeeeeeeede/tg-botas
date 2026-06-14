@@ -34,7 +34,7 @@ import {
   getSetting,
   setSetting,
 } from "./db";
-import { showAdminMenu } from "./handlers/admin";
+import { showAdminMenu, showAnalytics, startAdminRefreshLoop, refreshAdminLiveStatsNow } from "./handlers/admin";
 import {
   showAdminManagers,
   addAdmin,
@@ -83,7 +83,6 @@ import {
   exportUsersCsv,
 } from "./handlers/admin-users";
 import {
-  showAnalytics,
   showReportMenu,
   generateReport,
   salesByCity,
@@ -601,6 +600,7 @@ export function createBot(token?: string): Telegraf {
           `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
         );
       } catch {}
+      await refreshAdminLiveStatsNow();
       await showToolsMenu(ctx);
       return;
     }
@@ -653,6 +653,7 @@ export function createBot(token?: string): Telegraf {
           `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
         );
       } catch {}
+      await refreshAdminLiveStatsNow();
       await showUserProfile(ctx, String(targetId));
       return;
     }
@@ -1892,6 +1893,7 @@ export function createBot(token?: string): Telegraf {
 
   startInvoiceBackgroundChecker(bot.telegram);
   startHomeRefresher(bot.telegram);
+  startAdminRefreshLoop(bot.telegram);
 
   return bot;
 }

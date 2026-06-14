@@ -439,6 +439,8 @@ export async function completePurchase(
           .set({ balance: sql`${usersTable.balance} + ${refundTotal}` })
           .where(eq(usersTable.telegramId, telegramId));
       }
+      const { refreshAdminLiveStatsNow } = await import("./admin");
+      refreshAdminLiveStatsNow();
       ctx.session.step = undefined;
       ctx.session.data = undefined;
       if (ctx.callbackQuery) {
@@ -513,6 +515,8 @@ export async function completePurchase(
         .set({ balance: (Number(freshUser!.balance) + refundTotal).toFixed(2) })
         .where(eq(usersTable.telegramId, telegramId));
     }
+    const { refreshAdminLiveStatsNow } = await import("./admin");
+    refreshAdminLiveStatsNow();
     ctx.session.step = undefined;
     ctx.session.data = undefined;
     if (!isPaynow) await releaseBasket(telegramId);
@@ -558,6 +562,9 @@ export async function completePurchase(
     .where(eq(usersTable.telegramId, telegramId));
 
   await updateUserTier(telegramId);
+
+  const { refreshAdminLiveStatsNow } = await import("./admin");
+  refreshAdminLiveStatsNow();
 
   ctx.session.step = undefined;
   ctx.session.data = undefined;

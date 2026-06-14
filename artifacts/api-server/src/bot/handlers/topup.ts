@@ -282,6 +282,9 @@ export async function checkTopUpPayment(
         cancelPendingInvoice(telegramId);
         ctx.session.data = undefined;
 
+        const { refreshAdminLiveStatsNow } = await import("./admin");
+        refreshAdminLiveStatsNow();
+
         await ctx.editMessageText(
           `✅ <b>Top-Up Successful!</b>\n\n` +
           `◎ Received: <b>${receivedSol.toFixed(6)} SOL</b>\n` +

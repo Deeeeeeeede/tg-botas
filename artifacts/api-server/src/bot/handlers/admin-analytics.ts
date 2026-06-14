@@ -13,21 +13,6 @@ import { ANALYTICS_KB, inlineKeyboard, BACK_BTN } from "../keyboards";
 import { formatEur, formatDate } from "../utils";
 import { getDashboardStats } from "../db";
 
-export async function showAnalytics(ctx: Context & { session: BotSession }) {
-  const stats = await getDashboardStats();
-  const text =
-    `📊 <b>Analytics Dashboard</b>\n\n` +
-    `👥 Users: <b>${stats.users}</b>\n` +
-    `💰 Balances held: <b>${formatEur(stats.balances)}</b>\n` +
-    `📈 Sales (30d): <b>${formatEur(stats.sales30d)}</b>\n` +
-    `📦 In stock: <b>${stats.products}</b>`;
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, { parse_mode: "HTML", ...ANALYTICS_KB });
-  } else {
-    await ctx.reply(text, { parse_mode: "HTML", ...ANALYTICS_KB });
-  }
-}
-
 function getPeriod(period: string): { start: Date; end: Date; label: string } {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());

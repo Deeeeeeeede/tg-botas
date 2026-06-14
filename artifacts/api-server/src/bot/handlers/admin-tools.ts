@@ -118,6 +118,8 @@ export async function doRefund(ctx: Context & { session: BotSession }, purchaseI
       .set({ balance: String(newBal.toFixed(2)) })
       .where(eq(usersTable.telegramId, purchase.userId));
   }
+  const { refreshAdminLiveStatsNow } = await import("./admin");
+  refreshAdminLiveStatsNow();
   await ctx.answerCbQuery(
     `Refunded ${formatEur(purchase.pricePaid)} to user ${purchase.userId}.`,
     { show_alert: true }

@@ -138,7 +138,17 @@ export function startInvoiceBackgroundChecker(telegram: any) {
 }
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
+let cachedSolPrice = 0;
+let cachedSolPriceTs = 0;
+const SOL_PRICE_TTL_MS = 60_000; // 1 minute cache
+
 export async function getSolPrice(): Promise<number> {
+  // Return cached price if still fresh
+  if (cachedSolPrice > 0 && Date.now() - cachedSolPriceTs < SOL_PRICE_TTL_MS) {
+    return cachedSolPrice;
+  }
+
+  // Try CoinGecko first
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
@@ -147,12 +157,49 @@ export async function getSolPrice(): Promise<number> {
       { signal: controller.signal },
     );
     const data = (await res.json()) as any;
-    return Number(data?.solana?.eur ?? 0);
+    const price = Number(data?.solana?.eur ?? 0);
+    if (price > 0) {
+      cachedSolPrice = price;
+      cachedSolPriceTs = Date.now();
+      return price;
+    }
   } catch {
-    return 0;
+    // CoinGecko failed — try fallback
   } finally {
     clearTimeout(timer);
   }
+
+  // Fallback: Binance SOL/USDT then convert to EUR via USDT/EUR
+  const binanceController = new AbortController();
+  const binanceTimer = setTimeout(() => binanceController.abort(), 8000);
+  try {
+    const [solUsdtRes, usdtEurRes] = await Promise.all([
+      fetch(
+        "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT",
+        { signal: binanceController.signal },
+      ),
+      fetch(
+        "https://api.binance.com/api/v3/ticker/price?symbol=EURUSDT",
+        { signal: binanceController.signal },
+      ),
+    ]);
+    const solUsdt = (await solUsdtRes.json()) as any;
+    const usdtEur = (await usdtEurRes.json()) as any;
+    const solPriceUsdt = Number(solUsdt?.price ?? 0);
+    const eurPriceUsdt = Number(usdtEur?.price ?? 0);
+    if (solPriceUsdt > 0 && eurPriceUsdt > 0) {
+      const price = solPriceUsdt * eurPriceUsdt;
+      cachedSolPrice = price;
+      cachedSolPriceTs = Date.now();
+      return price;
+    }
+  } catch {
+    // Fallback also failed — return cached price if available, else 0
+  } finally {
+    clearTimeout(binanceTimer);
+  }
+
+  return cachedSolPrice > 0 ? cachedSolPrice : 0;
 }
 
 export async function showCryptoMenu(

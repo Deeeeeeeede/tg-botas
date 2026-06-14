@@ -72,20 +72,67 @@ export async function deleteCity(
   ctx: Context & { session: BotSession },
   cityId: number
 ) {
+  const city = await db
+    .select()
+    .from(citiesTable)
+    .where(eq(citiesTable.id, cityId))
+    .then((r) => r[0]);
+  if (!city) {
+    await ctx.answerCbQuery("City not found.", { show_alert: true });
+    return;
+  }
+
+  const [dcount] = await db
+    .select({ count: count() })
+    .from(districtsTable)
+    .where(eq(districtsTable.cityId, cityId));
   const [pcount] = await db
     .select({ count: count() })
     .from(productsTable)
     .where(eq(productsTable.cityId, cityId));
-  if ((pcount?.count ?? 0) > 0) {
-    await ctx.answerCbQuery(
-      "Cannot delete: city still has products. Remove products first.",
-      { show_alert: true }
-    );
+
+  const districts = dcount?.count ?? 0;
+  const products = pcount?.count ?? 0;
+
+  const kb = inlineKeyboard([
+    [
+      { text: "✅ Yes, delete everything", callback_data: `geo:confirm_del_city:${cityId}` },
+    ],
+    [
+      { text: "❌ Cancel", callback_data: `geo:city_detail:${cityId}` },
+    ],
+  ]);
+
+  await ctx.editMessageText(
+    `🚨 <b>Delete City</b>\n\n` +
+    `City: <b>${city.name}</b>\n` +
+    `Districts to delete: <b>${districts}</b>\n` +
+    `Products to delete: <b>${products}</b>\n\n` +
+    `Are you sure? This action cannot be undone.`,
+    { parse_mode: "HTML", ...kb }
+  );
+}
+
+export async function confirmDeleteCity(
+  ctx: Context & { session: BotSession },
+  cityId: number
+) {
+  const city = await db
+    .select()
+    .from(citiesTable)
+    .where(eq(citiesTable.id, cityId))
+    .then((r) => r[0]);
+  if (!city) {
+    await ctx.answerCbQuery("City not found.", { show_alert: true });
     return;
   }
+
+  // Delete all products in this city first, then districts, then city.
+  await db.delete(productsTable).where(eq(productsTable.cityId, cityId));
   await db.delete(districtsTable).where(eq(districtsTable.cityId, cityId));
   await db.delete(citiesTable).where(eq(citiesTable.id, cityId));
-  await ctx.answerCbQuery("City deleted.");
+
+  await ctx.answerCbQuery(`✅ City "${city.name}" and all districts/products deleted.`, { show_alert: true });
   await showCitiesList(ctx);
 }
 
@@ -158,18 +205,58 @@ export async function deleteDistrict(
   districtId: number,
   cityId: number
 ) {
+  const district = await db
+    .select()
+    .from(districtsTable)
+    .where(eq(districtsTable.id, districtId))
+    .then((r) => r[0]);
+  if (!district) {
+    await ctx.answerCbQuery("District not found.", { show_alert: true });
+    return;
+  }
+
   const [pcount] = await db
     .select({ count: count() })
     .from(productsTable)
     .where(eq(productsTable.districtId, districtId));
-  if ((pcount?.count ?? 0) > 0) {
-    await ctx.answerCbQuery(
-      "Cannot delete: district still has products. Remove products first.",
-      { show_alert: true }
-    );
+  const products = pcount?.count ?? 0;
+
+  const kb = inlineKeyboard([
+    [
+      { text: "✅ Yes, delete everything", callback_data: `geo:confirm_del_dist:${districtId}:${cityId}` },
+    ],
+    [
+      { text: "❌ Cancel", callback_data: `geo:dist_detail:${districtId}:${cityId}` },
+    ],
+  ]);
+
+  await ctx.editMessageText(
+    `🚨 <b>Delete District</b>\n\n` +
+    `District: <b>${district.name}</b>\n` +
+    `Products to delete: <b>${products}</b>\n\n` +
+    `Are you sure? This action cannot be undone.`,
+    { parse_mode: "HTML", ...kb }
+  );
+}
+
+export async function confirmDeleteDistrict(
+  ctx: Context & { session: BotSession },
+  districtId: number,
+  cityId: number
+) {
+  const district = await db
+    .select()
+    .from(districtsTable)
+    .where(eq(districtsTable.id, districtId))
+    .then((r) => r[0]);
+  if (!district) {
+    await ctx.answerCbQuery("District not found.", { show_alert: true });
     return;
   }
+
+  await db.delete(productsTable).where(eq(productsTable.districtId, districtId));
   await db.delete(districtsTable).where(eq(districtsTable.id, districtId));
-  await ctx.answerCbQuery("District deleted.");
+
+  await ctx.answerCbQuery(`✅ District "${district.name}" and all products deleted.`, { show_alert: true });
   await showDistrictsList(ctx, cityId);
 }

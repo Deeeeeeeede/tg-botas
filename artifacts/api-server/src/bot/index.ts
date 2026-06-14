@@ -51,10 +51,12 @@ import {
   showCitiesList,
   showCityDetail,
   deleteCity,
+  confirmDeleteCity,
   showDistrictsCitySelect,
   showDistrictsList,
   showDistrictDetail,
   deleteDistrict,
+  confirmDeleteDistrict,
 } from "./handlers/admin-geography";
 import {
   showProductsMenu,
@@ -1110,6 +1112,7 @@ export function createBot(token?: string): Telegraf {
           );
         }
         if (sub === "del_city") return deleteCity(ctx, parseInt(parts[1]!));
+        if (sub === "confirm_del_city") return confirmDeleteCity(ctx, parseInt(parts[1]!));
         if (sub === "districts_select") return showDistrictsCitySelect(ctx);
         if (sub === "dist_city")
           return showDistrictsList(ctx, parseInt(parts[1]!));
@@ -1140,6 +1143,8 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "del_dist")
           return deleteDistrict(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
+        if (sub === "confirm_del_dist")
+          return confirmDeleteDistrict(ctx, parseInt(parts[1]!), parseInt(parts[2]!));
         return;
       }
 

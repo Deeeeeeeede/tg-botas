@@ -85,6 +85,9 @@ export const ADMIN_MAIN_KB = inlineKeyboard([
     { text: "📡 Auto Ads System", callback_data: "admin:autoads" },
     { text: "👷 Workers (/klad)", callback_data: "admin:workers" },
   ],
+  [
+    { text: "🛡 Manage Admins", callback_data: "admin:manage_admins" },
+  ],
   [{ text: "🏠 User Home", callback_data: "shop:home" }],
 ]);
 

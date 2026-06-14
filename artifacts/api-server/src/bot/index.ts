@@ -36,6 +36,11 @@ import {
 } from "./db";
 import { showAdminMenu } from "./handlers/admin";
 import {
+  showAdminManagers,
+  addAdmin,
+  removeAdmin,
+} from "./handlers/admin-managers";
+import {
   showTopUpMenu,
   handleTopUpAmount,
   checkTopUpPayment,
@@ -605,6 +610,12 @@ export function createBot(token?: string): Telegraf {
       return;
     }
 
+    if (step === "admin:add_admin") {
+      ctx.session.step = undefined;
+      await addAdmin(ctx, text.trim());
+      return;
+    }
+
     if (step === "admin:add_balance_for_user") {
       const targetId = data["targetUserId"] as number;
       const amount = parseFloat(text.trim());
@@ -1042,6 +1053,21 @@ export function createBot(token?: string): Telegraf {
           const page = parseInt(parts[1] ?? "0");
           return showPurchases(ctx, page);
         }
+        if (sub === "manage_admins") return showAdminManagers(ctx);
+        return;
+      }
+
+      if (action === "admin_mgr") {
+        if (!(await isAdmin(ctx.from.id))) return;
+        const sub = parts[0];
+        if (sub === "add") {
+          ctx.session.step = "admin:add_admin";
+          return ctx.editMessageText(
+            "Enter the Telegram ID of the user to make admin:",
+            inlineKeyboard([[BACK_BTN("admin:manage_admins")]]),
+          );
+        }
+        if (sub === "remove") return removeAdmin(ctx, parseInt(parts[1]!));
         return;
       }
 

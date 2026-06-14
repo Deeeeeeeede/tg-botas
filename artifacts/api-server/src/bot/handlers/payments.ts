@@ -59,11 +59,13 @@ type LiveInvoice = {
 const pendingInvoices = new Map<number, LiveInvoice>();
 
 // Builds the live countdown line appended to the invoice each tick.
+// Uses whole-minute granularity so the ticker only edits the message once per
+// minute instead of every few seconds — dramatically reduces "edited" flicker.
 export function countdownLine(expiresAt: number): string {
   const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-  const mins = Math.floor(remaining / 60);
-  const secs = remaining % 60;
-  return `⏳ Time remaining: <b>${mins}:${secs.toString().padStart(2, "0")}</b>`;
+  const mins = Math.ceil(remaining / 60);
+  if (mins <= 0) return `⏳ Time remaining: <b>less than a minute</b>`;
+  return `⏳ Time remaining: <b>${mins} min</b>`;
 }
 
 export function registerPendingInvoice(userId: number, invoice: LiveInvoice) {

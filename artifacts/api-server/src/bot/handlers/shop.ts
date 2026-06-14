@@ -205,28 +205,11 @@ export async function refreshHome(
 
   try {
     if (home.isMedia && home.homeMediaFileId) {
-      // Media messages can't be edited — delete and resend.
-      await telegram.deleteMessage(home.chatId, home.messageId).catch(() => {});
-      const extra = {
-        caption: header,
-        parse_mode: "HTML" as const,
-        ...(kb as any),
-      };
-      let msg: any;
-      if (home.homeMediaType === "animation") {
-        msg = await telegram.sendAnimation(home.chatId, home.homeMediaFileId, { ...extra, reply_markup: (extra as any).reply_markup });
-      } else if (home.homeMediaType === "video") {
-        msg = await telegram.sendVideo(home.chatId, home.homeMediaFileId, { ...extra, reply_markup: (extra as any).reply_markup });
-      } else {
-        msg = await telegram.sendPhoto(home.chatId, home.homeMediaFileId, { ...extra, reply_markup: (extra as any).reply_markup });
-      }
-      const newId = msg?.message_id;
-      if (newId) {
-        lastHomeMessages.set(userId, {
-          ...home,
-          messageId: newId,
-        });
-      }
+      // Media messages can't be edited in place — skipping background refresh
+      // to avoid deleting/resending a new message while the user may be
+      // mid-purchase or navigating menus, which is very disruptive.
+      // The home screen will be rebuilt from scratch on the next /start or
+      // shop:home tap, so the data will still be fresh when the user sees it.
     } else {
       await telegram.editMessageText(
         home.chatId,

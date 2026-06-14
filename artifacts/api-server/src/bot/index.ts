@@ -460,8 +460,8 @@ export function createBot(token?: string): Telegraf {
         };
         ctx.session.step = "admin:add_product:more_files";
         await ctx.reply(
-          "✅ Text content saved. Send more files to add to this lot, or /done to finish.",
-          inlineKeyboard([[BACK_BTN("admin:products")]]),
+          "✅ Text saved. Send more files or press Done when finished.",
+          inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
         );
       } else {
         const product = await db
@@ -1954,17 +1954,15 @@ export function createBot(token?: string): Telegraf {
             addedBy: ctx.from.id,
           };
           return ctx.editMessageText(
-            "📤 Send photos/files for this lot.\n\n" +
-              "All files you send will go to ONE buyer.\n" +
+            "📤 Send the product content for this lot.\n\n" +
+              "You can send <b>photos, videos, documents</b> or type <b>text</b> (e.g. an address or code).\n" +
+              "Everything you send goes to ONE buyer.\n" +
               "Press ✅ Done when finished.",
             {
+              parse_mode: "HTML",
               ...inlineKeyboard([
-                [
-                  {
-                    text: "✖ Cancel",
-                    callback_data: "klad:exit",
-                  },
-                ],
+                [{ text: "✅ Done", callback_data: "klad:done" }],
+                [{ text: "✖ Cancel", callback_data: "klad:exit" }],
               ]),
             },
           );

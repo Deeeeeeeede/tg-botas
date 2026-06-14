@@ -197,8 +197,16 @@ export async function salesByType(ctx: Context & { session: BotSession }) {
   });
 }
 
+function contentIcon(fileType: string): string {
+  if (fileType === "photo") return "📷";
+  if (fileType === "document") return "📄";
+  if (fileType === "video") return "🎥";
+  if (fileType === "animation") return "🎞";
+  return "💬";
+}
+
 export async function salesToday(ctx: Context & { session: BotSession }, page = 0) {
-  const PAGE_SIZE = 15;
+  const PAGE_SIZE = 10;
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -207,7 +215,6 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
       purchaseId: purchasesTable.id,
       pricePaid: purchasesTable.pricePaid,
       createdAt: purchasesTable.createdAt,
-      paymentMethod: purchasesTable.paymentMethod,
       refunded: purchasesTable.refunded,
       username: usersTable.username,
       firstName: usersTable.firstName,
@@ -215,6 +222,9 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
       typeEmoji: productTypesTable.emoji,
       typeName: productTypesTable.name,
       size: productsTable.size,
+      fileType: productsTable.fileType,
+      content: productsTable.content,
+      mediaFiles: productsTable.mediaFiles,
     })
     .from(purchasesTable)
     .innerJoin(usersTable, eq(purchasesTable.userId, usersTable.telegramId))
@@ -254,7 +264,8 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
   if (rows.length === 0) {
     text += "No sales today yet.";
   } else {
-    for (const r of rows) {
+    rows.forEach((r, i) => {
+      const num = page * PAGE_SIZE + i + 1;
       const time = r.createdAt.toLocaleTimeString("en-GB", {
         timeZone: "Europe/Vilnius",
         hour: "2-digit",
@@ -262,14 +273,42 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
       });
       const buyer = r.username
         ? `@${r.username}`
-        : r.firstName
-          ? r.firstName
-          : `#${r.telegramId}`;
+        : r.firstName ?? `#${r.telegramId}`;
       const refundMark = r.refunded ? " ↩️" : "";
+      const icon = contentIcon(r.fileType);
+      // For text products show a snippet; for media show the icon type
+      let contentHint = "";
+      if (r.fileType === "text" && r.content) {
+        const snippet = r.content.length > 40 ? r.content.slice(0, 40) + "…" : r.content;
+        contentHint = `\n  💬 <code>${snippet}</code>`;
+      } else {
+        contentHint = `\n  ${icon} ${r.fileType}`;
+        // If there are additional media files, mention them
+        if (r.mediaFiles) {
+          try {
+            const extras = JSON.parse(r.mediaFiles) as { fileType: string }[];
+            if (extras.length > 0) {
+              const extraIcons = extras.map((e) => contentIcon(e.fileType)).join(" ");
+              contentHint += ` + ${extraIcons}`;
+            }
+          } catch {}
+        }
+      }
       text +=
-        `${time} — <b>${buyer}</b>\n` +
-        `  ${r.typeEmoji} ${r.typeName} ${r.size} — ${formatEur(r.pricePaid)}${refundMark}\n`;
-    }
+        `<b>${num}.</b> ${time} — <b>${buyer}</b>\n` +
+        `  ${r.typeEmoji} ${r.typeName} ${r.size} — ${formatEur(r.pricePaid)}${refundMark}` +
+        `${contentHint}\n\n`;
+    });
+  }
+
+  // Compact view buttons: 5 per row
+  const viewBtns = rows.map((r, i) => ({
+    text: `👁 ${page * PAGE_SIZE + i + 1}`,
+    callback_data: `analytics:view_sale:${r.purchaseId}`,
+  }));
+  const viewRows: { text: string; callback_data: string }[][] = [];
+  for (let i = 0; i < viewBtns.length; i += 5) {
+    viewRows.push(viewBtns.slice(i, i + 5));
   }
 
   const navRow: { text: string; callback_data: string }[] = [];
@@ -277,6 +316,7 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
   if ((page + 1) * PAGE_SIZE < totalCount) navRow.push({ text: "Next »", callback_data: `analytics:today:${page + 1}` });
 
   const kb = inlineKeyboard([
+    ...viewRows,
     ...(navRow.length ? [navRow] : []),
     [BACK_BTN("admin:analytics")],
   ]);
@@ -285,6 +325,66 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
     await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
   } else {
     await ctx.reply(text, { parse_mode: "HTML", ...kb });
+  }
+}
+
+export async function viewSaleContent(ctx: Context & { session: BotSession }, purchaseId: number) {
+  const [row] = await db
+    .select({
+      fileType: productsTable.fileType,
+      content: productsTable.content,
+      fileId: productsTable.fileId,
+      mediaFiles: productsTable.mediaFiles,
+      typeName: productTypesTable.name,
+      typeEmoji: productTypesTable.emoji,
+      size: productsTable.size,
+      username: usersTable.username,
+      firstName: usersTable.firstName,
+      pricePaid: purchasesTable.pricePaid,
+    })
+    .from(purchasesTable)
+    .innerJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
+    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .innerJoin(usersTable, eq(purchasesTable.userId, usersTable.telegramId))
+    .where(eq(purchasesTable.id, purchaseId));
+
+  if (!row) {
+    await ctx.answerCbQuery("❌ Sale not found.");
+    return;
+  }
+
+  await ctx.answerCbQuery();
+
+  const buyer = row.username ? `@${row.username}` : row.firstName ?? `#${purchaseId}`;
+  const header = `🧾 Content sent to <b>${buyer}</b> — ${row.typeEmoji} ${row.typeName} ${row.size} (${formatEur(row.pricePaid)}):`;
+
+  // Send the header as plain text
+  await ctx.reply(header, { parse_mode: "HTML" });
+
+  // Collect all files to send (same logic as sendProductMedia)
+  const files: { fileId: string; fileType: string }[] = [];
+  if (row.fileId && row.fileType !== "text") {
+    files.push({ fileId: row.fileId, fileType: row.fileType });
+  }
+  if (row.mediaFiles) {
+    try {
+      const extras = JSON.parse(row.mediaFiles) as { fileId: string; fileType: string }[];
+      files.push(...extras);
+    } catch {}
+  }
+
+  // Send text content first if primary type is text
+  if (row.fileType === "text" && row.content) {
+    await ctx.reply(`<code>${row.content}</code>`, { parse_mode: "HTML" });
+  }
+
+  // Send all media/text items
+  for (const f of files) {
+    if (f.fileType === "photo") await ctx.replyWithPhoto(f.fileId);
+    else if (f.fileType === "document") await ctx.replyWithDocument(f.fileId);
+    else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
+    else if (f.fileType === "animation" || f.fileType === "gif") await (ctx as any).replyWithAnimation(f.fileId);
+    else if (f.fileType === "text") await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
   }
 }
 

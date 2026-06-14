@@ -108,6 +108,7 @@ import {
   salesByType,
   showPurchases,
   salesToday,
+  viewSaleContent,
 } from "./handlers/admin-analytics";
 import {
   showCommsMenu,
@@ -1498,6 +1499,7 @@ export function createBot(token?: string): Telegraf {
         const sub = parts[0];
         if (sub === "report") return showReportMenu(ctx);
         if (sub === "today") return salesToday(ctx, parseInt(parts[1] ?? "0"));
+        if (sub === "view_sale") return viewSaleContent(ctx, parseInt(parts[1]!));
         if (sub === "rpt") return generateReport(ctx, parts[1]!);
         if (sub === "city") return salesByCity(ctx);
         if (sub === "type") return salesByType(ctx);

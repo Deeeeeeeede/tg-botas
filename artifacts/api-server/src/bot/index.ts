@@ -107,6 +107,7 @@ import {
   salesByCity,
   salesByType,
   showPurchases,
+  salesToday,
 } from "./handlers/admin-analytics";
 import {
   showCommsMenu,
@@ -1496,6 +1497,7 @@ export function createBot(token?: string): Telegraf {
         if (!(await isAdmin(ctx.from.id))) return;
         const sub = parts[0];
         if (sub === "report") return showReportMenu(ctx);
+        if (sub === "today") return salesToday(ctx, parseInt(parts[1] ?? "0"));
         if (sub === "rpt") return generateReport(ctx, parts[1]!);
         if (sub === "city") return salesByCity(ctx);
         if (sub === "type") return salesByType(ctx);

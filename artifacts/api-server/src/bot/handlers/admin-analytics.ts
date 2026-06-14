@@ -8,7 +8,7 @@ import {
   citiesTable,
   productTypesTable,
 } from "@workspace/db";
-import { eq, and, gte, lte, count, sum, avg, desc } from "drizzle-orm";
+import { eq, and, gte, lte, count, sum, avg, desc, sql } from "drizzle-orm";
 import { ANALYTICS_KB, inlineKeyboard, BACK_BTN } from "../keyboards";
 import { formatEur, formatDate } from "../utils";
 import { getDashboardStats } from "../db";
@@ -195,6 +195,97 @@ export async function salesByType(ctx: Context & { session: BotSession }) {
     parse_mode: "HTML",
     ...inlineKeyboard([[BACK_BTN("admin:analytics")]]),
   });
+}
+
+export async function salesToday(ctx: Context & { session: BotSession }, page = 0) {
+  const PAGE_SIZE = 15;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const rows = await db
+    .select({
+      purchaseId: purchasesTable.id,
+      pricePaid: purchasesTable.pricePaid,
+      createdAt: purchasesTable.createdAt,
+      paymentMethod: purchasesTable.paymentMethod,
+      refunded: purchasesTable.refunded,
+      username: usersTable.username,
+      firstName: usersTable.firstName,
+      telegramId: usersTable.telegramId,
+      typeEmoji: productTypesTable.emoji,
+      typeName: productTypesTable.name,
+      size: productsTable.size,
+    })
+    .from(purchasesTable)
+    .innerJoin(usersTable, eq(purchasesTable.userId, usersTable.telegramId))
+    .innerJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
+    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .where(gte(purchasesTable.createdAt, todayStart))
+    .orderBy(desc(purchasesTable.createdAt))
+    .limit(PAGE_SIZE)
+    .offset(page * PAGE_SIZE);
+
+  const [totalsRow] = await db
+    .select({
+      totalOrders: count(),
+      totalRevenue: sum(purchasesTable.pricePaid),
+    })
+    .from(purchasesTable)
+    .where(and(gte(purchasesTable.createdAt, todayStart), eq(purchasesTable.refunded, false)));
+
+  const [totalCountRow] = await db
+    .select({ cnt: count() })
+    .from(purchasesTable)
+    .where(gte(purchasesTable.createdAt, todayStart));
+
+  const totalCount = totalCountRow?.cnt ?? 0;
+
+  const dateLabel = todayStart.toLocaleDateString("en-GB", {
+    timeZone: "Europe/Vilnius",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+
+  let text =
+    `📅 <b>Sales Today — ${dateLabel}</b>\n` +
+    `Orders: <b>${totalsRow?.totalOrders ?? 0}</b>   Revenue: <b>${formatEur(totalsRow?.totalRevenue ?? 0)}</b>\n\n`;
+
+  if (rows.length === 0) {
+    text += "No sales today yet.";
+  } else {
+    for (const r of rows) {
+      const time = r.createdAt.toLocaleTimeString("en-GB", {
+        timeZone: "Europe/Vilnius",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const buyer = r.username
+        ? `@${r.username}`
+        : r.firstName
+          ? r.firstName
+          : `#${r.telegramId}`;
+      const refundMark = r.refunded ? " ↩️" : "";
+      text +=
+        `${time} — <b>${buyer}</b>\n` +
+        `  ${r.typeEmoji} ${r.typeName} ${r.size} — ${formatEur(r.pricePaid)}${refundMark}\n`;
+    }
+  }
+
+  const navRow: { text: string; callback_data: string }[] = [];
+  if (page > 0) navRow.push({ text: "« Prev", callback_data: `analytics:today:${page - 1}` });
+  if ((page + 1) * PAGE_SIZE < totalCount) navRow.push({ text: "Next »", callback_data: `analytics:today:${page + 1}` });
+
+  const kb = inlineKeyboard([
+    ...(navRow.length ? [navRow] : []),
+    [BACK_BTN("admin:analytics")],
+  ]);
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+  } else {
+    await ctx.reply(text, { parse_mode: "HTML", ...kb });
+  }
 }
 
 export async function showPurchases(ctx: Context & { session: BotSession }, page = 0) {

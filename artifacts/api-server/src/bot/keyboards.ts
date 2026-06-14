@@ -140,6 +140,7 @@ export const TOOLS_KB = inlineKeyboard([
 ]);
 
 export const ANALYTICS_KB = inlineKeyboard([
+  [{ text: "📅 Sales Today", callback_data: "analytics:today:0" }],
   [{ text: "📋 Generate Report", callback_data: "analytics:report" }],
   [{ text: "🌍 Sales by City", callback_data: "analytics:city" }],
   [{ text: "📦 Sales by Type", callback_data: "analytics:type" }],

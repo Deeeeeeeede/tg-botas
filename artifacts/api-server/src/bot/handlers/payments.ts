@@ -680,6 +680,9 @@ export async function sendProductMedia(ctx: any, product: any) {
       else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
       else if (f.fileType === "animation" || f.fileType === "gif")
         await ctx.replyWithAnimation(f.fileId);
+      else if (f.fileType === "text")
+        // Text stored in mediaFiles uses fileId as the raw text value.
+        await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
     } catch {}
   }
 }

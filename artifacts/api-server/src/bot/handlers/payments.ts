@@ -550,6 +550,8 @@ export async function completePurchase(
       .update(usersTable)
       .set({ balance: (Number(freshUser!.balance) + totalCredit).toFixed(2) })
       .where(eq(usersTable.telegramId, telegramId));
+    const { refreshAdminLiveStatsNow } = await import("./admin");
+    refreshAdminLiveStatsNow();
   }
 
   const totalPaid = purchased.reduce((s, p) => s + p.pricePaid, 0);
@@ -562,9 +564,6 @@ export async function completePurchase(
     .where(eq(usersTable.telegramId, telegramId));
 
   await updateUserTier(telegramId);
-
-  const { refreshAdminLiveStatsNow } = await import("./admin");
-  refreshAdminLiveStatsNow();
 
   ctx.session.step = undefined;
   ctx.session.data = undefined;

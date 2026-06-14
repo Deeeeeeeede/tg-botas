@@ -34,7 +34,7 @@ import {
   getSetting,
   setSetting,
 } from "./db";
-import { showAdminMenu, showAnalytics, startAdminRefreshLoop, refreshAdminLiveStatsNow } from "./handlers/admin";
+import { showAdminMenu, showAnalytics, refreshAdminLiveStatsNow, setAdminTelegram } from "./handlers/admin";
 import {
   showAdminManagers,
   addAdmin,
@@ -1893,7 +1893,7 @@ export function createBot(token?: string): Telegraf {
 
   startInvoiceBackgroundChecker(bot.telegram);
   startHomeRefresher(bot.telegram);
-  startAdminRefreshLoop(bot.telegram);
+  setAdminTelegram(bot.telegram);
 
   return bot;
 }

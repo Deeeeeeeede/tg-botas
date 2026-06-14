@@ -34,14 +34,8 @@ export function refreshAdminLiveStatsNow() {
   }
 }
 
-let adminRefresherStarted = false;
-export function startAdminRefreshLoop(telegram: any) {
-  if (adminRefresherStarted) return;
-  adminRefresherStarted = true;
+export function setAdminTelegram(telegram: any) {
   _adminTelegram = telegram;
-  setInterval(async () => {
-    await refreshAdminLiveStats(telegram);
-  }, 30_000);
 }
 
 export async function showAdminMenu(ctx: Context & { session: BotSession }) {

@@ -350,6 +350,9 @@ export async function showPriceList(ctx: Context & { session: BotSession }) {
 }
 
 export async function showShopCities(ctx: Context & { session: BotSession }) {
+  // Clear the tracked home message so the background refresher doesn't
+  // overwrite this navigation screen back to the home screen.
+  if (ctx.from) clearHomeMessage(ctx.from.id);
   const cities = await getCities();
   if (cities.length === 0) {
     await editOrReplace(
@@ -375,6 +378,7 @@ export async function showShopDistricts(
   ctx: Context & { session: BotSession },
   cityId: number
 ) {
+  if (ctx.from) clearHomeMessage(ctx.from.id);
   const city = await db
     .select()
     .from(citiesTable)
@@ -461,6 +465,7 @@ export async function showShopTypes(
   cityId: number,
   districtId: number
 ) {
+  if (ctx.from) clearHomeMessage(ctx.from.id);
   const types = await getProductTypes();
   const availableTypes: typeof types = [];
 
@@ -515,6 +520,7 @@ export async function showShopSizes(
   districtId: number,
   typeId: number
 ) {
+  if (ctx.from) clearHomeMessage(ctx.from.id);
   const telegramId = ctx.from!.id;
   const user = await getUser(telegramId);
   if (!user) return;

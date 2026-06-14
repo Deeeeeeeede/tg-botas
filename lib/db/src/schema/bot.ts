@@ -91,6 +91,32 @@ export const productsTable = pgTable("bot_products", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// "Empty product" catalog slots. An admin defines that a product type is
+// offered in a given city/district at a given size+price WITHOUT uploading any
+// actual stock. Workers (/klad) then fill these slots with real content, and
+// uploaded products inherit the slot price. Customers only ever see slots that
+// have actual available stock.
+export const productSlotsTable = pgTable(
+  "bot_product_slots",
+  {
+    id: serial("id").primaryKey(),
+    cityId: integer("city_id").notNull().references(() => citiesTable.id),
+    districtId: integer("district_id").notNull().references(() => districtsTable.id),
+    typeId: integer("type_id").notNull().references(() => productTypesTable.id),
+    size: text("size").notNull(),
+    price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqSlot: uniqueIndex("bot_product_slots_uniq").on(
+      t.cityId,
+      t.districtId,
+      t.typeId,
+      t.size,
+    ),
+  }),
+);
+
 export const purchasesTable = pgTable("bot_purchases", {
   id: serial("id").primaryKey(),
   queueId: text("queue_id").notNull().unique(),

@@ -100,6 +100,8 @@ export const GEOGRAPHY_KB = inlineKeyboard([
 
 export const PRODUCTS_MENU_KB = inlineKeyboard([
   [{ text: "➕ Add Products", callback_data: "prod:add" }],
+  [{ text: "🆕 Add Empty Product", callback_data: "prod:empty" }],
+  [{ text: "📋 Empty Products (Catalog)", callback_data: "eprod:catalog" }],
   [{ text: "📦 Bulk Add Products", callback_data: "prod:bulk_add" }],
   [{ text: "🗂 Manage Products", callback_data: "prod:manage" }],
   [{ text: "👁 View Bot Stock", callback_data: "prod:stock" }],

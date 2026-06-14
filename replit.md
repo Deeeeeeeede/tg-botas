@@ -48,7 +48,8 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 
 - **Analytics** — sales reports by period, city, type; top products
 - **Purchases** — live feed of all paid orders
-- **Products Menu** — add, bulk add, manage, view stock, product types, bulk price edit
+- **Products Menu** — add, add empty product (catalog slots, no upload), bulk add, manage, view stock, product types, bulk price edit
+  - **Add Empty Product** — admin defines a product (name + sizes/prices) with NO content, assigns it to multiple cities/districts at once. Creates `bot_product_slots` rows. Workers then upload real stock via `/klad` and inherit the slot price. Customers only ever see slots that have actual available stock.
 - **Geography Menu** — cities and districts CRUD
 - **Users Menu** — search, ban/unban, reseller management, CSV export
 - **Discounts Menu** — discount codes, product discounts (🔥), reseller discounts (👑), tier system (🏆)

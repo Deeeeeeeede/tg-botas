@@ -1,0 +1,1 @@
+- [Drizzle upsert duplicate-target](drizzle-upsert-duplicate-target.md) — onConflictDoUpdate crashes if one INSERT has two rows hitting the same unique key; dedupe before insert.

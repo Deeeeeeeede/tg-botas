@@ -7,6 +7,7 @@ import {
   districtsTable,
   productTypesTable,
   productsTable,
+  productSlotsTable,
   discountCodesTable,
   welcomeTemplatesTable,
   tierLevelsTable,
@@ -75,6 +76,22 @@ import {
   showBulkPriceTypes,
   applyBulkPrice,
 } from "./handlers/admin-products";
+import {
+  showEmptyProductStart,
+  promptEmptyProductSizes,
+  parseSizesInput,
+  showEmptyProductCities,
+  toggleEmptyProductCity,
+  showEmptyProductDistricts,
+  toggleEmptyProductDistrict,
+  selectAllEmptyProductDistricts,
+  showEmptyProductConfirm,
+  createEmptyProductSlots,
+  showCatalog,
+  showCatalogType,
+  deleteCatalogSlot,
+  deleteCatalogType,
+} from "./handlers/admin-slots";
 import {
   showUsersMenu,
   showUserProfile,
@@ -303,6 +320,46 @@ export function createBot(token?: string): Telegraf {
       ctx.session.step = undefined;
       await ctx.reply("✅ Type renamed.");
       await showProductTypes(ctx);
+      return;
+    }
+
+    if (step === "eprod:new_type_name") {
+      ctx.session.data = { ...data, eprodNewTypeName: text.trim() };
+      ctx.session.step = "eprod:new_type_emoji";
+      await ctx.reply(
+        "Enter an emoji for this product (e.g. ❄️):",
+        inlineKeyboard([[BACK_BTN("prod:empty")]]),
+      );
+      return;
+    }
+
+    if (step === "eprod:new_type_emoji") {
+      const name = data["eprodNewTypeName"] as string;
+      const emoji = text.trim();
+      await db
+        .insert(productTypesTable)
+        .values({ name, emoji })
+        .onConflictDoNothing();
+      const type = await db
+        .select()
+        .from(productTypesTable)
+        .where(eq(productTypesTable.name, name))
+        .then((r) => r[0]);
+      ctx.session.data = { eprodTypeId: type?.id };
+      await promptEmptyProductSizes(ctx, false);
+      return;
+    }
+
+    if (step === "eprod:sizes") {
+      const sizes = parseSizesInput(text);
+      if (sizes.length === 0) {
+        await ctx.reply(
+          "Couldn't read any sizes. Send one per line like:\n1g 10\n2g 18",
+        );
+        return;
+      }
+      ctx.session.data = { ...data, eprodSizes: sizes };
+      await showEmptyProductCities(ctx);
       return;
     }
 
@@ -1172,6 +1229,7 @@ export function createBot(token?: string): Telegraf {
         if (sub === "del_type")
           return deleteProductType(ctx, parseInt(parts[1]!));
         if (sub === "stock") return showStock(ctx);
+        if (sub === "empty") return showEmptyProductStart(ctx);
         if (sub === "manage") return showManageProducts(ctx);
         if (sub === "add" || sub === "bulk_add") {
           const cityId = parts[1] ? parseInt(parts[1]) : undefined;
@@ -1233,6 +1291,46 @@ export function createBot(token?: string): Telegraf {
             inlineKeyboard([[BACK_BTN("prod:bulk_price")]]),
           );
         }
+        return;
+      }
+
+      if (action === "eprod") {
+        if (!(await isAdmin(ctx.from.id))) return;
+        const sub = parts[0];
+        if (sub === "catalog") return showCatalog(ctx);
+        if (sub === "cat_type")
+          return showCatalogType(ctx, parseInt(parts[1]!));
+        if (sub === "cat_del")
+          return deleteCatalogSlot(
+            ctx,
+            parseInt(parts[1]!),
+            parseInt(parts[2]!),
+          );
+        if (sub === "cat_delall")
+          return deleteCatalogType(ctx, parseInt(parts[1]!));
+        if (sub === "new_type") {
+          ctx.session.step = "eprod:new_type_name";
+          ctx.session.data = {};
+          return ctx.editMessageText(
+            "Enter the new product name (e.g. ❄️ Snaiges):",
+            inlineKeyboard([[BACK_BTN("prod:empty")]]),
+          );
+        }
+        if (sub === "type") {
+          const typeId = parseInt(parts[1]!);
+          ctx.session.data = { eprodTypeId: typeId };
+          return promptEmptyProductSizes(ctx, true);
+        }
+        if (sub === "city_toggle")
+          return toggleEmptyProductCity(ctx, parseInt(parts[1]!));
+        if (sub === "cities_done") return showEmptyProductDistricts(ctx);
+        if (sub === "cities_back") return showEmptyProductCities(ctx);
+        if (sub === "dist_toggle")
+          return toggleEmptyProductDistrict(ctx, parseInt(parts[1]!));
+        if (sub === "dist_all") return selectAllEmptyProductDistricts(ctx);
+        if (sub === "dists_done") return showEmptyProductConfirm(ctx);
+        if (sub === "dists_back") return showEmptyProductDistricts(ctx);
+        if (sub === "confirm") return createEmptyProductSlots(ctx);
         return;
       }
 
@@ -1797,21 +1895,45 @@ export function createBot(token?: string): Telegraf {
           const typeId = parseInt(parts[3]!);
           const size = decodeURIComponent(parts[4]!);
 
-          const existing = await db
+          // Price is inherited from the admin-defined catalog slot if present,
+          // otherwise from any existing real product for this combination.
+          const slot = await db
             .select()
-            .from(productsTable)
+            .from(productSlotsTable)
             .where(
               and(
-                eq(productsTable.cityId, cityId),
-                eq(productsTable.districtId, districtId),
-                eq(productsTable.typeId, typeId),
-                eq(productsTable.size, size),
+                eq(productSlotsTable.cityId, cityId),
+                eq(productSlotsTable.districtId, districtId),
+                eq(productSlotsTable.typeId, typeId),
+                eq(productSlotsTable.size, size),
               ),
             )
             .limit(1)
             .then((r) => r[0]);
 
-          if (!existing) {
+          const existing = slot
+            ? undefined
+            : await db
+                .select()
+                .from(productsTable)
+                .where(
+                  and(
+                    eq(productsTable.cityId, cityId),
+                    eq(productsTable.districtId, districtId),
+                    eq(productsTable.typeId, typeId),
+                    eq(productsTable.size, size),
+                  ),
+                )
+                .limit(1)
+                .then((r) => r[0]);
+
+          const price = slot
+            ? Number(slot.price)
+            : existing
+              ? Number(existing.price)
+              : undefined;
+
+          if (price === undefined) {
             return ctx.editMessageText(
               "⚠️ Size not found in the system. Ask admin to set it up first.",
               {
@@ -1828,7 +1950,7 @@ export function createBot(token?: string): Telegraf {
             districtId,
             typeId,
             size,
-            price: Number(existing.price),
+            price,
             addedBy: ctx.from.id,
           };
           return ctx.editMessageText(

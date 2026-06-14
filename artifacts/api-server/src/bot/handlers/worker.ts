@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import {
   workersTable,
   productsTable,
+  productSlotsTable,
   productTypesTable,
   citiesTable,
   districtsTable,
@@ -200,7 +201,22 @@ export async function showKladSizes(
   districtId: number,
   typeId: number
 ) {
-  const sizes = await db
+  // Sizes come from two sources: catalog slots defined by an admin
+  // ("empty products") and any existing real product stock. Union them so a
+  // worker can upload even when there's no stock yet.
+  const slotSizes = await db
+    .select({ size: productSlotsTable.size })
+    .from(productSlotsTable)
+    .where(
+      and(
+        eq(productSlotsTable.cityId, cityId),
+        eq(productSlotsTable.districtId, districtId),
+        eq(productSlotsTable.typeId, typeId)
+      )
+    )
+    .groupBy(productSlotsTable.size);
+
+  const productSizes = await db
     .select({ size: productsTable.size })
     .from(productsTable)
     .where(
@@ -211,6 +227,11 @@ export async function showKladSizes(
       )
     )
     .groupBy(productsTable.size);
+
+  const sizeSet = new Set<string>();
+  for (const s of slotSizes) sizeSet.add(s.size);
+  for (const s of productSizes) sizeSet.add(s.size);
+  const sizes = [...sizeSet].sort().map((size) => ({ size }));
 
   if (sizes.length === 0) {
     await ctx.editMessageText("No sizes available for this type in this location.", {

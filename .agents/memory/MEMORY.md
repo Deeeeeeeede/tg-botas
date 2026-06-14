@@ -1,1 +1,2 @@
 - [Drizzle upsert duplicate-target](drizzle-upsert-duplicate-target.md) — onConflictDoUpdate crashes if one INSERT has two rows hitting the same unique key; dedupe before insert.
+- [Balance write safety](balance-write-safety.md) — never update usersTable.balance without a per-user where clause; credit relative + in a transaction.

@@ -8,7 +8,7 @@ import {
   basketsTable,
   backupTokensTable,
 } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import {
   TOOLS_KB,
   inlineKeyboard,
@@ -92,32 +92,31 @@ export async function doRefund(ctx: Context & { session: BotSession }, purchaseI
     });
     return;
   }
-  await db
-    .update(purchasesTable)
-    .set({ refunded: true })
-    .where(eq(purchasesTable.id, purchaseId));
-  await db
-    .update(usersTable)
-    .set({
-      balance: db
-        .select({ b: usersTable.balance })
-        .from(usersTable)
-        .where(eq(usersTable.telegramId, purchase.userId))
-        .then(() => "") as any,
-    });
+  // Mark the purchase refunded and credit the buyer's balance atomically, so a
+  // refund can never be double-applied or leave the balance out of sync. The
+  // refunded flag is flipped conditionally (refunded = false) inside the
+  // transaction, making the whole operation idempotent.
+  await db.transaction(async (tx) => {
+    const flagged = await tx
+      .update(purchasesTable)
+      .set({ refunded: true })
+      .where(
+        and(
+          eq(purchasesTable.id, purchaseId),
+          eq(purchasesTable.refunded, false),
+        ),
+      )
+      .returning({ id: purchasesTable.id });
+    // Another concurrent refund already claimed this purchase — do nothing.
+    if (flagged.length === 0) return;
 
-  const user = await db
-    .select()
-    .from(usersTable)
-    .where(eq(usersTable.telegramId, purchase.userId))
-    .then((r) => r[0]);
-  if (user) {
-    const newBal = Number(user.balance) + Number(purchase.pricePaid);
-    await db
+    await tx
       .update(usersTable)
-      .set({ balance: String(newBal.toFixed(2)) })
+      .set({
+        balance: sql`${usersTable.balance} + ${purchase.pricePaid}`,
+      })
       .where(eq(usersTable.telegramId, purchase.userId));
-  }
+  });
   const { refreshAdminLiveStatsNow } = await import("./admin");
   refreshAdminLiveStatsNow();
   await ctx.answerCbQuery(

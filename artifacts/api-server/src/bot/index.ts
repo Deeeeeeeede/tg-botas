@@ -131,6 +131,7 @@ import {
   showRecentPurchasesForRefund,
   doRefund,
   showBackupTokens,
+  deleteBackupToken,
   showChangeWallet,
   doChangeWallet,
   resetWalletToDefault,
@@ -823,13 +824,22 @@ export function createBot(token?: string): Telegraf {
 
     if (step === "admin:add_backup_token") {
       const tokenVal = text.trim();
-      await db
-        .insert(backupTokensTable)
-        .values({ token: tokenVal })
-        .onConflictDoNothing();
-      ctx.session.step = undefined;
-      await ctx.reply("✅ Backup token saved.");
-      await showBackupTokens(ctx);
+      // Validate the token with Telegram before saving
+      try {
+        const testBot = new Telegraf(tokenVal);
+        const me = await testBot.telegram.getMe();
+        await db
+          .insert(backupTokensTable)
+          .values({ token: tokenVal })
+          .onConflictDoNothing();
+        ctx.session.step = undefined;
+        await ctx.reply(`✅ Backup token saved — @${me.username}`);
+        await showBackupTokens(ctx);
+      } catch {
+        await ctx.reply(
+          "❌ That token is invalid or Telegram rejected it. Please check it and try again, or press Back.",
+        );
+      }
       return;
     }
 
@@ -1700,6 +1710,7 @@ export function createBot(token?: string): Telegraf {
         if (sub === "refund") return showRecentPurchasesForRefund(ctx);
         if (sub === "do_refund") return doRefund(ctx, parseInt(parts[1]!));
         if (sub === "backup_tokens") return showBackupTokens(ctx);
+        if (sub === "del_token") return deleteBackupToken(ctx, parseInt(parts[1]!));
         if (sub === "add_token") {
           ctx.session.step = "admin:add_backup_token";
           return ctx.editMessageText(

@@ -180,18 +180,29 @@ export async function showBackupTokens(ctx: Context & { session: BotSession }) {
   } else {
     text += tokens
       .map(
-        (t) =>
-          `• ${t.token.substring(0, 10)}... ${t.isActive ? "[ACTIVE]" : ""}`
+        (t, i) =>
+          `${i + 1}. <code>${t.token.substring(0, 10)}...${t.token.slice(-4)}</code>${t.isActive ? " [ACTIVE]" : ""}`
       )
       .join("\n");
   }
-  const kb = inlineKeyboard([
-    [{ text: "➕ Add Backup Token", callback_data: "tools:add_token" }],
-    [BACK_BTN("admin:tools")],
+  const rows: { text: string; callback_data: string }[][] = tokens.map((t, i) => [
+    {
+      text: `❌ Delete #${i + 1} (…${t.token.slice(-4)})`,
+      callback_data: `tools:del_token:${t.id}`,
+    },
   ]);
+  rows.push([{ text: "➕ Add Backup Token", callback_data: "tools:add_token" }]);
+  rows.push([BACK_BTN("admin:tools")]);
+  const kb = inlineKeyboard(rows);
   if (ctx.callbackQuery) {
     await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
   } else {
     await ctx.reply(text, { parse_mode: "HTML", ...kb });
   }
+}
+
+export async function deleteBackupToken(ctx: Context & { session: BotSession }, id: number) {
+  await db.delete(backupTokensTable).where(eq(backupTokensTable.id, id));
+  await ctx.answerCbQuery("🗑 Token deleted.");
+  await showBackupTokens(ctx);
 }

@@ -177,6 +177,7 @@ import {
   checkout,
   applyDiscountCode,
   showOrders,
+  showOrderContent,
   showCustomerReviews,
   showReviewsMenu,
 } from "./handlers/shop";
@@ -2042,6 +2043,8 @@ export function createBot(token?: string): Telegraf {
           const page = parseInt(parts[1] ?? "0");
           return showOrders(ctx, page);
         }
+        if (sub === "order_content")
+          return showOrderContent(ctx, parseInt(parts[1]!));
         if (sub === "topup") return showTopUpMenu(ctx);
         if (sub === "reviews_menu") return showReviewsMenu(ctx);
         if (sub === "review_prompt") {

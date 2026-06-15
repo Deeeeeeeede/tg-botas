@@ -1017,10 +1017,23 @@ export async function showOrders(
   page = 0
 ) {
   const telegramId = ctx.from!.id;
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 5;
+
   const purchases = await db
-    .select()
+    .select({
+      id: purchasesTable.id,
+      queueId: purchasesTable.queueId,
+      pricePaid: purchasesTable.pricePaid,
+      refunded: purchasesTable.refunded,
+      createdAt: purchasesTable.createdAt,
+      productId: purchasesTable.productId,
+      size: productsTable.size,
+      typeName: productTypesTable.name,
+      typeEmoji: productTypesTable.emoji,
+    })
     .from(purchasesTable)
+    .leftJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
+    .leftJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
     .where(eq(purchasesTable.userId, telegramId))
     .orderBy(desc(purchasesTable.createdAt))
     .limit(PAGE_SIZE)
@@ -1031,15 +1044,41 @@ export async function showOrders(
     .from(purchasesTable)
     .where(eq(purchasesTable.userId, telegramId));
   const total = totalRow?.count ?? 0;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  let text = "📋 <b>My Orders</b>\n\n";
+  let text = `📋 <b>My Orders</b>\n`;
+  if (total > 0) {
+    text += `${total} purchase${total === 1 ? "" : "s"} total · Page ${page + 1}/${totalPages}\n`;
+    text += `Tap a number to view item details &amp; photos.\n\n`;
+  }
+
   if (purchases.length === 0) {
     text += "No orders yet.";
   } else {
-    for (const p of purchases) {
+    purchases.forEach((p, i) => {
+      const n = page * PAGE_SIZE + i + 1;
+      const label =
+        p.typeName && p.size
+          ? `${p.typeEmoji ?? ""} ${p.typeName} ${p.size}`.trim()
+          : `Order ${p.queueId}`;
       text +=
-        `• <code>${p.queueId}</code> — ${formatEur(p.pricePaid)} — ${formatDate(p.createdAt)}` +
-        `${p.refunded ? " ↩ refunded" : ""}\n`;
+        `<b>${n}.</b> ${label}\n` +
+        `   💶 ${formatEur(p.pricePaid)}` +
+        (p.refunded ? " · ↩ refunded" : "") +
+        ` · ${formatDate(p.createdAt)}\n`;
+    });
+  }
+
+  const rows: { text: string; callback_data: string }[][] = [];
+
+  // Numbered buttons to fetch the actual content of each item.
+  if (purchases.length > 0) {
+    const contentBtns = purchases.map((p, i) => ({
+      text: String(page * PAGE_SIZE + i + 1),
+      callback_data: `shop:order_content:${p.id}`,
+    }));
+    for (let i = 0; i < contentBtns.length; i += 5) {
+      rows.push(contentBtns.slice(i, i + 5));
     }
   }
 
@@ -1048,16 +1087,110 @@ export async function showOrders(
     navRow.push({ text: "« Prev", callback_data: `shop:orders:${page - 1}` });
   if ((page + 1) * PAGE_SIZE < total)
     navRow.push({ text: "Next »", callback_data: `shop:orders:${page + 1}` });
+  if (navRow.length) rows.push(navRow);
+  rows.push([BACK_BTN("shop:profile")]);
 
-  const kb = inlineKeyboard([
-    ...(navRow.length ? [navRow] : []),
-    [BACK_BTN("shop:home")],
-  ]);
+  const kb = inlineKeyboard(rows);
 
   if (ctx.callbackQuery) {
     await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
   } else {
     await ctx.reply(text, { parse_mode: "HTML", ...kb });
+  }
+}
+
+// Sends the actual product content (photo/text/video) for a specific purchase
+// back to the customer who bought it. Verifies ownership before sending.
+export async function showOrderContent(
+  ctx: Context & { session: BotSession },
+  purchaseId: number,
+) {
+  const telegramId = ctx.from!.id;
+
+  const [row] = await db
+    .select({
+      userId: purchasesTable.userId,
+      pricePaid: purchasesTable.pricePaid,
+      queueId: purchasesTable.queueId,
+      refunded: purchasesTable.refunded,
+      createdAt: purchasesTable.createdAt,
+      size: productsTable.size,
+      fileType: productsTable.fileType,
+      content: productsTable.content,
+      fileId: productsTable.fileId,
+      mediaFiles: productsTable.mediaFiles,
+      typeName: productTypesTable.name,
+      typeEmoji: productTypesTable.emoji,
+      cityName: citiesTable.name,
+      districtName: districtsTable.name,
+    })
+    .from(purchasesTable)
+    .leftJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
+    .leftJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .leftJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .leftJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+    .where(eq(purchasesTable.id, purchaseId));
+
+  if (!row || row.userId !== telegramId) {
+    await ctx.answerCbQuery("❌ Not found.", { show_alert: true });
+    return;
+  }
+  await ctx.answerCbQuery();
+
+  const label =
+    row.typeName && row.size
+      ? `${row.typeEmoji ?? ""} ${row.typeName} ${row.size}`.trim()
+      : `Order`;
+
+  let header = `📦 <b>${label}</b>\n`;
+  if (row.cityName && row.districtName)
+    header += `📍 ${row.cityName} · ${row.districtName}\n`;
+  header +=
+    `💶 ${formatEur(row.pricePaid)}` +
+    (row.refunded ? " · ↩ refunded" : "") +
+    `\n📅 ${formatDate(row.createdAt)}\n` +
+    `🆔 <code>${row.queueId}</code>`;
+
+  await ctx.reply(header, { parse_mode: "HTML" });
+
+  // Collect and send all attached files.
+  const files: { fileId: string; fileType: string }[] = [];
+  if (row.fileId && row.fileType && row.fileType !== "text") {
+    files.push({ fileId: row.fileId, fileType: row.fileType });
+  }
+  if (row.mediaFiles) {
+    try {
+      const extras = JSON.parse(row.mediaFiles) as {
+        fileId: string;
+        fileType: string;
+      }[];
+      files.push(...extras);
+    } catch {}
+  }
+
+  if (row.fileType === "text" && row.content) {
+    await ctx.reply(`<code>${row.content}</code>`, { parse_mode: "HTML" });
+  }
+
+  for (const f of files) {
+    try {
+      if (f.fileType === "photo") await ctx.replyWithPhoto(f.fileId);
+      else if (f.fileType === "document") await ctx.replyWithDocument(f.fileId);
+      else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
+      else if (f.fileType === "animation" || f.fileType === "gif")
+        await (ctx as Context).replyWithAnimation(f.fileId);
+      else if (f.fileType === "text")
+        await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
+    } catch {}
+  }
+
+  if (
+    files.length === 0 &&
+    !(row.fileType === "text" && row.content)
+  ) {
+    await ctx.reply(
+      "ℹ️ The content for this item is no longer available.",
+    );
   }
 }
 

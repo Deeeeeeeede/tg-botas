@@ -149,6 +149,7 @@ import {
   showWorkersList,
   showWorkerDetail,
   showWorkerUploads,
+  sendWorkerUploadContent,
   toggleWorker,
   removeWorker,
   showKladMenu,
@@ -1956,6 +1957,8 @@ export function createBot(token?: string): Telegraf {
             parseInt(parts[1]!),
             parseInt(parts[2] ?? "0"),
           );
+        if (sub === "upload")
+          return sendWorkerUploadContent(ctx, parseInt(parts[1]!));
         if (sub === "enable")
           return toggleWorker(ctx, parseInt(parts[1]!), true);
         if (sub === "disable")

@@ -161,12 +161,25 @@ export async function showWorkerUploads(
 
   const totalPages = Math.ceil(totalCount / UPLOADS_PAGE_SIZE);
   let text = `📦 <b>Uploads by ${label}</b>\n`;
-  text += `Total: ${totalCount} · Page ${page + 1}/${totalPages}\n\n`;
-  for (const p of products) {
+  text += `Total: ${totalCount} · Page ${page + 1}/${totalPages}\n`;
+  text += `Tap a number below to view its photos / text.\n\n`;
+  products.forEach((p, i) => {
     const icon = STATUS_ICON[p.status] ?? "•";
+    const n = page * UPLOADS_PAGE_SIZE + i + 1;
     text +=
-      `${icon} <b>${p.size}</b> — ${formatEur(p.price)} · ${p.status}\n` +
+      `<b>${n}.</b> ${icon} <b>${p.size}</b> — ${formatEur(p.price)} · ${p.status}\n` +
       `   ${formatDate(p.createdAt)}\n`;
+  });
+
+  const rows: { text: string; callback_data: string }[][] = [];
+
+  // One numbered button per upload (5 per row) to fetch its actual content.
+  const contentBtns = products.map((p, i) => ({
+    text: String(page * UPLOADS_PAGE_SIZE + i + 1),
+    callback_data: `workers:upload:${p.id}`,
+  }));
+  for (let i = 0; i < contentBtns.length; i += 5) {
+    rows.push(contentBtns.slice(i, i + 5));
   }
 
   const nav: { text: string; callback_data: string }[] = [];
@@ -180,8 +193,6 @@ export async function showWorkerUploads(
       text: "Next ➡",
       callback_data: `workers:uploads:${workerId}:${page + 1}`,
     });
-
-  const rows: { text: string; callback_data: string }[][] = [];
   if (nav.length > 0) rows.push(nav);
   rows.push([BACK_BTN(`workers:detail:${workerId}`)]);
 
@@ -189,6 +200,81 @@ export async function showWorkerUploads(
     parse_mode: "HTML",
     ...inlineKeyboard(rows),
   });
+}
+
+export async function sendWorkerUploadContent(
+  ctx: Context & { session: BotSession },
+  productId: number
+) {
+  const [row] = await db
+    .select({
+      size: productsTable.size,
+      price: productsTable.price,
+      status: productsTable.status,
+      content: productsTable.content,
+      fileId: productsTable.fileId,
+      fileType: productsTable.fileType,
+      mediaFiles: productsTable.mediaFiles,
+      createdAt: productsTable.createdAt,
+      cityName: citiesTable.name,
+      districtName: districtsTable.name,
+      typeName: productTypesTable.name,
+      typeEmoji: productTypesTable.emoji,
+    })
+    .from(productsTable)
+    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .where(eq(productsTable.id, productId));
+
+  if (!row) {
+    await ctx.answerCbQuery("❌ Product not found.");
+    return;
+  }
+  await ctx.answerCbQuery();
+
+  const icon = STATUS_ICON[row.status] ?? "•";
+  const header =
+    `📦 <b>${row.typeEmoji ?? ""} ${row.typeName} ${row.size}</b>\n` +
+    `${row.cityName} · ${row.districtName}\n` +
+    `${formatEur(row.price)} · ${icon} ${row.status} · ${formatDate(row.createdAt)}`;
+  await ctx.reply(header, { parse_mode: "HTML" });
+
+  // Collect every file attached to this upload (primary + extras).
+  const files: { fileId: string; fileType: string }[] = [];
+  if (row.fileId && row.fileType !== "text") {
+    files.push({ fileId: row.fileId, fileType: row.fileType });
+  }
+  if (row.mediaFiles) {
+    try {
+      const extras = JSON.parse(row.mediaFiles) as {
+        fileId: string;
+        fileType: string;
+      }[];
+      files.push(...extras);
+    } catch {
+      // ignore malformed media_files JSON
+    }
+  }
+
+  // Send inline text content first when the upload is text-based.
+  if (row.fileType === "text" && row.content) {
+    await ctx.reply(`<code>${row.content}</code>`, { parse_mode: "HTML" });
+  }
+
+  for (const f of files) {
+    if (f.fileType === "photo") await ctx.replyWithPhoto(f.fileId);
+    else if (f.fileType === "document") await ctx.replyWithDocument(f.fileId);
+    else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
+    else if (f.fileType === "animation" || f.fileType === "gif")
+      await (ctx as Context).replyWithAnimation(f.fileId);
+    else if (f.fileType === "text")
+      await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
+  }
+
+  if (files.length === 0 && !(row.fileType === "text" && row.content)) {
+    await ctx.reply("⚠️ This upload has no stored content.");
+  }
 }
 
 export async function toggleWorker(

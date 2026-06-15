@@ -3,3 +3,4 @@
 - [sold-status invariant](sold-status-invariant.md) — never mark bot_products status='sold' as a soft-delete; 'sold' must always imply a bot_purchases row, else stock silently vanishes.
 - [Owner/admin authz](owner-admin-authz.md) — owner admin = OWNER_ID env only (getOwnerId/isOwner); never hardcode a Telegram ID for auth (backdoor risk).
 - [Worker tag derivation](worker-tag-derivation.md) — products link to workers only via bot_products.workerTag; reads must derive the tag identically to upload (use resolveWorkerTag) or uploads vanish.
+- [One-poller rule](one-poller-rule.md) — only one instance may long-poll a bot token; workspace must skip polling (or use DEV_BOT_TOKEN) so the live VM owns BOT_TOKEN 24/7.

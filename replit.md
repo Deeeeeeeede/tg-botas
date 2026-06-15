@@ -10,8 +10,9 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string (provisioned automatically)
-- Required env: `BOT_TOKEN` — Telegram bot token
+- Required env: `BOT_TOKEN` — Telegram bot token (used by the deployed production bot)
 - Required env: `OWNER_ID` — Owner's Telegram user ID (auto-added to admin list on startup)
+- Optional env: `DEV_BOT_TOKEN` — a SEPARATE BotFather token used only in the workspace. The bot only polls Telegram in the workspace if this is set; otherwise the dev process stays quiet so it never conflicts with the live deployment (see "Running 24/7" below).
 
 ## Stack
 
@@ -69,6 +70,7 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 ## Architecture decisions
 
 - Bot runs in the same process as the Express API server (long polling, not webhook)
+- **Running 24/7 / one-poller rule**: Telegram allows only ONE long-polling instance per bot token. The deployed Reserved VM polls `BOT_TOKEN` 24/7 — the user does NOT need to keep Replit open. The startup logic (`startBotWithFailover` in `artifacts/api-server/src/index.ts`) detects deployment via `REPLIT_DEPLOYMENT`: in deployment it polls `BOT_TOKEN`; in the workspace it polls ONLY if `DEV_BOT_TOKEN` is set, otherwise it skips polling entirely. This prevents the workspace and the live VM from fighting over updates (Telegram 409 Conflict), which previously made the bot flaky and caused uploads/actions to be lost. After changing bot code, re-publish so the deployment runs the latest build.
 - Automatic token failover: on startup the bot tries the main `BOT_TOKEN` first, then saved backup tokens (Tools → Backup Tokens). A health check (`getMe` every 60s) detects a revoked/deleted token (401/404) and relaunches on the next available token. The active token is flagged `[ACTIVE]` in the backup tokens list. Note: a backup bot has a different @username, so customers must open the new bot link — but all data is shared via the same database.
 - Session state stored in memory (Telegraf built-in session)
 - Price calculation applies discounts in order: fire (sale) → crown (reseller) → trophy (tier rule) → tier global % → discount code

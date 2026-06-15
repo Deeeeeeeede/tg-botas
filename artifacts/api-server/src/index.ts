@@ -183,6 +183,39 @@ async function activateBot(
 }
 
 async function startBotWithFailover(): Promise<void> {
+  // Telegram allows only ONE long-polling instance per bot token. The live
+  // deployment (Reserved VM) polls BOT_TOKEN 24/7. If the workspace/dev process
+  // also polled BOT_TOKEN, the two would fight over every update (409 Conflict),
+  // making the bot flaky and causing uploads/actions to be lost. So in dev we
+  // only poll when given a SEPARATE token via DEV_BOT_TOKEN; otherwise we stay
+  // quiet and let the deployment own the bot.
+  const isDeployment = !!process.env["REPLIT_DEPLOYMENT"];
+
+  if (!isDeployment) {
+    const devToken = process.env["DEV_BOT_TOKEN"];
+    if (!devToken) {
+      logger.warn(
+        "Skipping Telegram polling in the workspace to avoid a 409 conflict " +
+          "with the live deployment (only one instance may poll a token). " +
+          "The deployed bot keeps running 24/7. To test the bot from the " +
+          "workspace, set DEV_BOT_TOKEN to a separate BotFather token.",
+      );
+      return;
+    }
+    const bot = createBot(devToken);
+    try {
+      const me = await bot.telegram.getMe();
+      await activateBot(bot, devToken, {
+        username: me.username,
+        isBackup: false,
+        tokenIndex: 0,
+      });
+    } catch (err) {
+      logger.error({ err }, "DEV_BOT_TOKEN failed to start");
+    }
+    return;
+  }
+
   const tokens = await getOrderedTokens();
   if (tokens.length === 0) {
     logger.warn("BOT_TOKEN not set — bot will not start");

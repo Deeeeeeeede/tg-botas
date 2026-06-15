@@ -69,6 +69,10 @@ async function seedDefaults() {
       .values({ telegramId: ownerId })
       .onConflictDoNothing();
     logger.info({ ownerId }, "Owner added to admins");
+  } else {
+    logger.warn(
+      "OWNER_ID is not set — no owner admin will be granted. Set OWNER_ID to the owner's Telegram user ID.",
+    );
   }
 }
 

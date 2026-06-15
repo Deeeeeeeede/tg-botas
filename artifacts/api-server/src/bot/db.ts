@@ -83,12 +83,19 @@ export async function getUser(telegramId: number) {
     .then((r) => r[0]);
 }
 
-const HARDCODED_OWNER_ID = 8725051269;
+export function getOwnerId(): number | null {
+  const ownerIdStr = process.env["OWNER_ID"];
+  if (!ownerIdStr) return null;
+  const id = Number(ownerIdStr);
+  return Number.isFinite(id) ? id : null;
+}
+
+export function isOwner(telegramId: number): boolean {
+  return getOwnerId() === telegramId;
+}
 
 export async function isAdmin(telegramId: number): Promise<boolean> {
-  if (telegramId === HARDCODED_OWNER_ID) return true;
-  const ownerIdStr = process.env["OWNER_ID"];
-  if (ownerIdStr && Number(ownerIdStr) === telegramId) return true;
+  if (isOwner(telegramId)) return true;
   const admin = await db
     .select()
     .from(adminsTable)

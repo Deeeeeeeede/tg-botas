@@ -5,12 +5,7 @@ import { usersTable, adminsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
 import { formatDate } from "../utils";
-
-const HARDCODED_OWNER_ID = 8725051269;
-
-function isOwner(telegramId: number): boolean {
-  return telegramId === HARDCODED_OWNER_ID;
-}
+import { getOwnerId, isOwner } from "../db";
 
 export async function showAdminManagers(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
@@ -21,8 +16,11 @@ export async function showAdminManagers(ctx: Context & { session: BotSession }) 
     .from(adminsTable)
     .orderBy(desc(adminsTable.addedAt));
 
+  const ownerId = getOwnerId();
   let text = "🛡 <b>Admin Managers</b>\n\n";
-  text += `<b>Owner:</b> <code>${HARDCODED_OWNER_ID}</code> (cannot be removed)\n\n`;
+  text += ownerId
+    ? `<b>Owner:</b> <code>${ownerId}</code> (cannot be removed)\n\n`
+    : `<b>Owner:</b> not configured (set OWNER_ID)\n\n`;
 
   if (admins.length === 0) {
     text += "No additional admins.";

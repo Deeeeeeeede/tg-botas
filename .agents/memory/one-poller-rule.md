@@ -21,3 +21,11 @@ deployments, empty in the workspace). Deployment → poll `BOT_TOKEN` (+ backups
 Workspace → poll only if `DEV_BOT_TOKEN` is set, else log a warning and skip. Dev and the
 deployment share the SAME built-in Postgres (`DATABASE_URL`), so data is consistent; the
 flakiness was purely the dual-poller conflict, not a DB split.
+
+**Polling does NOT self-restart in vanilla Telegraf:** once `bot.launch()` rejects with a
+409, the loop stays dead forever and the getMe health check keeps passing, so failover
+never fires — the deployed bot is silently down until a redeploy. `activateBot` therefore
+relaunches polling after a short delay whenever it stops unexpectedly (guarded to only the
+active, non-failing-over bot) so the live VM rides through transient 409s (redeploy overlap)
+and network blips. After ANY bot-startup change, the user must re-publish for the live VM
+to pick it up.

@@ -166,16 +166,38 @@ function scheduleHealthCheck(bot: Telegraf, token: string): void {
 }
 
 // Launch a validated bot, register it as active, and start health monitoring.
-// bot.launch() resolves only when the bot STOPS, so we never await it; we attach
-// a .catch() to surface polling failures instead of leaving them unhandled.
+const POLLING_RESTART_DELAY_MS = 5_000;
+
 async function activateBot(
   bot: Telegraf,
   token: string,
   meta: { username?: string; isBackup: boolean; tokenIndex: number },
 ): Promise<void> {
-  bot.launch({ dropPendingUpdates: true }).catch((err) => {
-    logger.error({ err, tokenIndex: meta.tokenIndex }, "Bot polling stopped");
-  });
+  // bot.launch() resolves only when polling STOPS. A 409 Conflict (another
+  // instance briefly polling the same token, e.g. during a redeploy) makes the
+  // loop reject and stay dead — Telegraf does NOT auto-restart, and the getMe
+  // health check still succeeds so failover never triggers. So we relaunch
+  // ourselves after a short delay, as long as this bot is still the live one.
+  const launch = (): void => {
+    bot
+      .launch({ dropPendingUpdates: true })
+      .then(() => {
+        // Resolved = polling stopped cleanly (e.g. SIGTERM). Don't relaunch.
+      })
+      .catch((err) => {
+        if (activeBot !== bot || failoverInProgress) return;
+        logger.warn(
+          { err, tokenIndex: meta.tokenIndex },
+          "Bot polling stopped — restarting polling shortly",
+        );
+        const t = setTimeout(() => {
+          if (activeBot === bot && !failoverInProgress) launch();
+        }, POLLING_RESTART_DELAY_MS);
+        t.unref?.();
+      });
+  };
+
+  launch();
   activeBot = bot;
   await markActiveToken(token);
   scheduleHealthCheck(bot, token);

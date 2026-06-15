@@ -43,29 +43,6 @@ const TIER_EMOJI: Record<string, string> = {
   Legend: "👑",
 };
 
-// Tracks each user's last home-screen message so we can refresh it
-// when a review is added or when a periodic refresh fires.
-type HomeMessage = {
-  chatId: number;
-  messageId: number;
-  isMedia: boolean;
-  homeMediaFileId?: string;
-  homeMediaType?: string;
-};
-const lastHomeMessages = new Map<number, HomeMessage>();
-
-export function clearHomeMessage(userId: number) {
-  lastHomeMessages.delete(userId);
-}
-
-export function getHomeMessage(userId: number): HomeMessage | undefined {
-  return lastHomeMessages.get(userId);
-}
-
-export function getAllHomeUserIds(): number[] {
-  return Array.from(lastHomeMessages.keys());
-}
-
 export async function showHome(ctx: Context & { session: BotSession }) {
   const telegramId = ctx.from!.id;
   ctx.session.step = undefined;
@@ -115,7 +92,6 @@ export async function showHome(ctx: Context & { session: BotSession }) {
     ],
   ]);
 
-  let sentMessage: any;
   if (homeMediaFileId) {
     if (ctx.callbackQuery) {
       await ctx.deleteMessage().catch(() => {});
@@ -126,116 +102,17 @@ export async function showHome(ctx: Context & { session: BotSession }) {
       ...(kb as any),
     };
     if (homeMediaType === "animation") {
-      sentMessage = await ctx.replyWithAnimation(homeMediaFileId, extra);
+      await ctx.replyWithAnimation(homeMediaFileId, extra);
     } else if (homeMediaType === "video") {
-      sentMessage = await ctx.replyWithVideo(homeMediaFileId, extra);
+      await ctx.replyWithVideo(homeMediaFileId, extra);
     } else {
-      sentMessage = await ctx.replyWithPhoto(homeMediaFileId, extra);
+      await ctx.replyWithPhoto(homeMediaFileId, extra);
     }
   } else if (ctx.callbackQuery) {
-    const msg = await ctx.editMessageText(header, { parse_mode: "HTML", ...kb });
-    sentMessage = msg;
+    await ctx.editMessageText(header, { parse_mode: "HTML", ...kb });
   } else {
-    sentMessage = await ctx.reply(header, { parse_mode: "HTML", ...kb });
+    await ctx.reply(header, { parse_mode: "HTML", ...kb });
   }
-
-  // Track the last home message so we can refresh it when reviews change.
-  const msgId = (sentMessage as any)?.message_id ?? (ctx.callbackQuery?.message as any)?.message_id;
-  if (msgId && ctx.chat?.id) {
-    lastHomeMessages.set(telegramId, {
-      chatId: ctx.chat.id,
-      messageId: msgId,
-      isMedia: !!homeMediaFileId,
-      homeMediaFileId: homeMediaFileId ?? undefined,
-      homeMediaType: homeMediaType ?? undefined,
-    });
-  }
-}
-
-// Rebuild and refresh the home screen for a specific user, updating the live
-// review count. Used when a new review is added or during periodic refreshes.
-export async function refreshHome(
-  telegram: any,
-  userId: number,
-  user?: any
-): Promise<void> {
-  const home = lastHomeMessages.get(userId);
-  if (!home) return;
-
-  const u =
-    user ??
-    (await db
-      .select()
-      .from(usersTable)
-      .where(eq(usersTable.telegramId, userId))
-      .then((r) => r[0]));
-  if (!u) return;
-
-  const [reviewCount, basketCount, welcomeText] = await Promise.all([
-    db.select({ count: count() }).from(reviewsTable).then((r) => r[0]?.count ?? 0),
-    db
-      .select({ count: count() })
-      .from(basketsTable)
-      .where(eq(basketsTable.userId, userId))
-      .then((r) => r[0]?.count ?? 0),
-    getWelcomeText(),
-  ]);
-
-  const tierEmoji = TIER_EMOJI[u.tierName] ?? "🌑";
-  const name = u.firstName ?? "Customer";
-  const header =
-    `👋 Hello, <b>${name}</b>!\n\n` +
-    `💰 Balance: <b>${formatEur(u.balance)}</b>\n` +
-    `⭐ Status: <b>${u.tierName}</b> ${tierEmoji}\n` +
-    `🛒 Basket: <b>${basketCount} item(s)</b>\n\n` +
-    `${welcomeText}\n\n` +
-    `⚠️ <b>Note: No refunds.</b>`;
-
-  const kb = inlineKeyboard([
-    [{ text: "🛒 Shop", callback_data: "shop:cities" }],
-    [
-      { text: "👤 Profile", callback_data: "shop:profile" },
-      { text: "💳 Top Up", callback_data: "shop:topup" },
-    ],
-    [
-      { text: `📝 Reviews (${reviewCount})`, callback_data: "shop:reviews_menu" },
-      { text: "📋 Price List", callback_data: "shop:pricelist" },
-    ],
-  ]);
-
-  try {
-    if (home.isMedia && home.homeMediaFileId) {
-      // Media messages can't be edited in place — skipping background refresh
-      // to avoid deleting/resending a new message while the user may be
-      // mid-purchase or navigating menus, which is very disruptive.
-      // The home screen will be rebuilt from scratch on the next /start or
-      // shop:home tap, so the data will still be fresh when the user sees it.
-    } else {
-      await telegram.editMessageText(
-        home.chatId,
-        home.messageId,
-        undefined,
-        header,
-        { parse_mode: "HTML", reply_markup: { inline_keyboard: (kb as any).reply_markup.inline_keyboard } },
-      );
-    }
-  } catch {
-    // Message was deleted or user navigated away — clear the tracker.
-    lastHomeMessages.delete(userId);
-  }
-}
-
-// Start a background refresher that updates the home-screen review count for
-// every user who currently has the home screen open. Runs every 30 seconds.
-let homeRefresherStarted = false;
-export function startHomeRefresher(telegram: any) {
-  if (homeRefresherStarted) return;
-  homeRefresherStarted = true;
-  setInterval(async () => {
-    for (const [userId, home] of Array.from(lastHomeMessages.entries())) {
-      await refreshHome(telegram, userId).catch(() => {});
-    }
-  }, 30_000);
 }
 
 export async function showProfile(ctx: Context & { session: BotSession }) {
@@ -350,9 +227,6 @@ export async function showPriceList(ctx: Context & { session: BotSession }) {
 }
 
 export async function showShopCities(ctx: Context & { session: BotSession }) {
-  // Clear the tracked home message so the background refresher doesn't
-  // overwrite this navigation screen back to the home screen.
-  if (ctx.from) clearHomeMessage(ctx.from.id);
   const cities = await getCities();
   if (cities.length === 0) {
     await editOrReplace(
@@ -378,7 +252,6 @@ export async function showShopDistricts(
   ctx: Context & { session: BotSession },
   cityId: number
 ) {
-  if (ctx.from) clearHomeMessage(ctx.from.id);
   const city = await db
     .select()
     .from(citiesTable)
@@ -465,7 +338,6 @@ export async function showShopTypes(
   cityId: number,
   districtId: number
 ) {
-  if (ctx.from) clearHomeMessage(ctx.from.id);
   const types = await getProductTypes();
   const availableTypes: typeof types = [];
 
@@ -520,7 +392,6 @@ export async function showShopSizes(
   districtId: number,
   typeId: number
 ) {
-  if (ctx.from) clearHomeMessage(ctx.from.id);
   const telegramId = ctx.from!.id;
   const user = await getUser(telegramId);
   if (!user) return;

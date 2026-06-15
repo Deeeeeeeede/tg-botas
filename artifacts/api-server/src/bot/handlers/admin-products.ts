@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import {
   productsTable,
   productTypesTable,
+  productSlotsTable,
   citiesTable,
   districtsTable,
 } from "@workspace/db";
@@ -68,19 +69,30 @@ export async function deleteProductType(
   ctx: Context & { session: BotSession },
   typeId: number
 ) {
+  // Any product (in ANY status — including sold history) and any catalog slot
+  // holds a foreign key to this type, so deleting the type while those exist
+  // would crash on a constraint violation. Refuse and tell the admin what to
+  // clear first.
   const [pcount] = await db
     .select({ count: count() })
     .from(productsTable)
-    .where(
-      and(
-        eq(productsTable.typeId, typeId),
-        eq(productsTable.status, "available")
-      )
-    );
+    .where(eq(productsTable.typeId, typeId));
   if ((pcount?.count ?? 0) > 0) {
-    await ctx.answerCbQuery("Cannot delete: type has active products.", {
-      show_alert: true,
-    });
+    await ctx.answerCbQuery(
+      "Cannot delete: products (incl. sold history) still use this type.",
+      { show_alert: true },
+    );
+    return;
+  }
+  const [scount] = await db
+    .select({ count: count() })
+    .from(productSlotsTable)
+    .where(eq(productSlotsTable.typeId, typeId));
+  if ((scount?.count ?? 0) > 0) {
+    await ctx.answerCbQuery(
+      "Cannot delete: catalog slots still use this type. Remove them first.",
+      { show_alert: true },
+    );
     return;
   }
   await db.delete(productTypesTable).where(eq(productTypesTable.id, typeId));

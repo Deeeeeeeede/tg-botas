@@ -5,6 +5,7 @@ import {
   citiesTable,
   districtsTable,
   productsTable,
+  productSlotsTable,
 } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { getCities, getDistricts } from "../db";
@@ -127,8 +128,11 @@ export async function confirmDeleteCity(
     return;
   }
 
-  // Delete all products in this city first, then districts, then city.
+  // Delete dependents first (products + catalog slots), then districts, then the
+  // city itself. Slots and districts both have foreign keys to the city, so
+  // skipping the slot cleanup would crash the delete on a constraint violation.
   await db.delete(productsTable).where(eq(productsTable.cityId, cityId));
+  await db.delete(productSlotsTable).where(eq(productSlotsTable.cityId, cityId));
   await db.delete(districtsTable).where(eq(districtsTable.cityId, cityId));
   await db.delete(citiesTable).where(eq(citiesTable.id, cityId));
 
@@ -254,7 +258,12 @@ export async function confirmDeleteDistrict(
     return;
   }
 
+  // Remove products + catalog slots in this district before the district row,
+  // otherwise the slot foreign key would block the delete.
   await db.delete(productsTable).where(eq(productsTable.districtId, districtId));
+  await db
+    .delete(productSlotsTable)
+    .where(eq(productSlotsTable.districtId, districtId));
   await db.delete(districtsTable).where(eq(districtsTable.id, districtId));
 
   await ctx.answerCbQuery(`✅ District "${district.name}" and all products deleted.`, { show_alert: true });

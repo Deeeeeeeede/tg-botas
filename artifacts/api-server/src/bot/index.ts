@@ -160,8 +160,6 @@ import {
   showShopTypes,
   showShopSizes,
   showSizeDetail,
-  refreshHome,
-  startHomeRefresher,
   addToBasket,
   payNow,
   showPaymentSummary,
@@ -889,11 +887,6 @@ export function createBot(token?: string): Telegraf {
       ctx.session.step = undefined;
       await ctx.reply("⭐ Thank you for your review!");
       await showHome(ctx);
-      // Instantly refresh the review count on all users' home screens.
-      const { getAllHomeUserIds } = await import("./handlers/shop");
-      for (const userId of getAllHomeUserIds()) {
-        await refreshHome(bot.telegram, userId).catch(() => {});
-      }
       return;
     }
 
@@ -1986,10 +1979,18 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "my_uploads") return showKladMyUploads(ctx, ctx.from.id);
         if (sub === "del_upload") {
+          // Only the worker's own still-available uploads are shown here, so we
+          // physically remove the row. Marking it "sold" would make a deleted
+          // upload masquerade as a phantom sale (an item that "vanished" with no
+          // buyer), which is exactly the disappearing-stock bug we're fixing.
           await db
-            .update(productsTable)
-            .set({ status: "sold" })
-            .where(eq(productsTable.id, parseInt(parts[1]!)));
+            .delete(productsTable)
+            .where(
+              and(
+                eq(productsTable.id, parseInt(parts[1]!)),
+                eq(productsTable.status, "available"),
+              ),
+            );
           await ctx.answerCbQuery("Upload deleted.");
           return showKladMyUploads(ctx, ctx.from.id);
         }
@@ -2034,7 +2035,6 @@ export function createBot(token?: string): Telegraf {
   });
 
   startInvoiceBackgroundChecker(bot.telegram);
-  startHomeRefresher(bot.telegram);
   setAdminTelegram(bot.telegram);
 
   return bot;

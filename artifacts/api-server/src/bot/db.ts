@@ -31,6 +31,7 @@ import {
   sum,
   ne,
   isNull,
+  or,
 } from "drizzle-orm";
 
 export async function getOrCreateUser(
@@ -315,10 +316,22 @@ export async function getDashboardStats() {
 }
 
 export async function clearExpiredReservations() {
+  // Only free reservations that have actually expired (or have no expiry set,
+  // which would otherwise leave a product stuck as "reserved" forever). Active,
+  // not-yet-expired reservations are left alone so we never yank an item out
+  // from under a customer who is mid-checkout.
   const result = await db
     .update(productsTable)
     .set({ status: "available", reservedBy: null, reservedUntil: null })
-    .where(eq(productsTable.status, "reserved"))
+    .where(
+      and(
+        eq(productsTable.status, "reserved"),
+        or(
+          isNull(productsTable.reservedUntil),
+          lt(productsTable.reservedUntil, new Date()),
+        ),
+      ),
+    )
     .returning({ id: productsTable.id });
   return result.length;
 }

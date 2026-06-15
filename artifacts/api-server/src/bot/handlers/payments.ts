@@ -521,37 +521,49 @@ export async function completePurchase(
   let unpurchasedRefund = 0;
 
   for (const spec of specs) {
-    const result = await db.execute(sql`
-      UPDATE bot_products
-      SET status = 'sold', reserved_by = NULL, reserved_until = NULL
-      WHERE id = (
-        SELECT id FROM bot_products
-        WHERE city_id = ${spec.cityId}
-          AND district_id = ${spec.districtId}
-          AND type_id = ${spec.typeId}
-          AND size = ${spec.size}
-          AND status = 'available'
-        ORDER BY created_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING id, size
-    `);
-    const row = result.rows[0] as { id: number; size: string } | undefined;
+    const queueId = generateQueueId();
+    // Claim the item and record the purchase atomically: either the product is
+    // marked sold AND the purchase row is written, or neither happens. Without
+    // this, a failure between the two writes leaves a product stuck as "sold"
+    // with no buyer — an item that silently "disappears" from stock.
+    const row = await db
+      .transaction(async (tx) => {
+        const result = await tx.execute(sql`
+          UPDATE bot_products
+          SET status = 'sold', reserved_by = NULL, reserved_until = NULL
+          WHERE id = (
+            SELECT id FROM bot_products
+            WHERE city_id = ${spec.cityId}
+              AND district_id = ${spec.districtId}
+              AND type_id = ${spec.typeId}
+              AND size = ${spec.size}
+              AND status = 'available'
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+          )
+          RETURNING id, size
+        `);
+        const claimed = result.rows[0] as
+          | { id: number; size: string }
+          | undefined;
+        if (!claimed) return undefined;
+        await tx.insert(purchasesTable).values({
+          queueId,
+          userId: telegramId,
+          productId: claimed.id,
+          pricePaid: spec.price.toFixed(2),
+          discountCodeUsed: discountCode,
+          paymentMethod,
+          txSignature,
+        });
+        return claimed;
+      })
+      .catch(() => undefined);
     if (!row) {
       unpurchasedRefund += spec.price;
       continue;
     }
-    const queueId = generateQueueId();
-    await db.insert(purchasesTable).values({
-      queueId,
-      userId: telegramId,
-      productId: row.id,
-      pricePaid: spec.price.toFixed(2),
-      discountCodeUsed: discountCode,
-      paymentMethod,
-      txSignature,
-    });
     purchased.push({ productId: row.id, size: row.size, queueId, pricePaid: spec.price });
   }
 

@@ -32,6 +32,7 @@ import {
   ne,
   isNull,
   or,
+  ilike,
 } from "drizzle-orm";
 
 export async function getOrCreateUser(
@@ -52,15 +53,23 @@ export async function getOrCreateUser(
     user = created!;
     await updateUserTier(telegramId);
   } else {
-    if (
+    const changedProfile =
       (username && username !== user.username) ||
-      (firstName && firstName !== user.firstName)
-    ) {
-      await db
-        .update(usersTable)
-        .set({ username, firstName })
-        .where(eq(usersTable.telegramId, telegramId));
-      user = { ...user, username: username ?? user.username, firstName: firstName ?? user.firstName };
+      (firstName && firstName !== user.firstName);
+    await db
+      .update(usersTable)
+      .set(
+        changedProfile
+          ? { username, firstName, lastActiveAt: new Date() }
+          : { lastActiveAt: new Date() },
+      )
+      .where(eq(usersTable.telegramId, telegramId));
+    if (changedProfile) {
+      user = {
+        ...user,
+        username: username ?? user.username,
+        firstName: firstName ?? user.firstName,
+      };
     }
   }
   return user;
@@ -350,4 +359,33 @@ export async function searchUser(query: string) {
   return all.find(
     (u) => (u.username ?? "").toLowerCase() === username
   );
+}
+
+// Search users by numeric Telegram ID (exact) or username (partial, case-insensitive).
+// Returns a list of matches, ordered by most recently active first.
+export async function searchUsers(query: string, limit = 12) {
+  const trimmed = query.trim();
+  const numId = Number(trimmed);
+  if (trimmed !== "" && !isNaN(numId)) {
+    return db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.telegramId, numId));
+  }
+  const term = trimmed.replace("@", "");
+  if (term === "") return [];
+  return db
+    .select()
+    .from(usersTable)
+    .where(ilike(usersTable.username, `%${term}%`))
+    .orderBy(desc(usersTable.lastActiveAt))
+    .limit(limit);
+}
+
+export async function getRecentlyActiveUsers(limit = 15) {
+  return db
+    .select()
+    .from(usersTable)
+    .orderBy(desc(usersTable.lastActiveAt))
+    .limit(limit);
 }

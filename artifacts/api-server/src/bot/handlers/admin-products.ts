@@ -297,9 +297,10 @@ export async function deleteAllProducts(
   districtId: number,
   typeId: number
 ) {
+  // Hard-delete every still-available unit in this city/district/type. Sold
+  // units are left untouched so purchase history and refunds stay intact.
   const result = await db
-    .update(productsTable)
-    .set({ status: "sold" })
+    .delete(productsTable)
     .where(
       and(
         eq(productsTable.cityId, cityId),

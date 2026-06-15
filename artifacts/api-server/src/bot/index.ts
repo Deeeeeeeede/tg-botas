@@ -20,7 +20,7 @@ import {
   purchasesTable,
   reviewsTable,
 } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { BotSession } from "./session";
 import {
@@ -34,6 +34,8 @@ import {
   getProductTypes,
   getSetting,
   setSetting,
+  searchUsers,
+  getRecentlyActiveUsers,
 } from "./db";
 import { showAdminMenu, showAnalytics, refreshAdminLiveStatsNow, setAdminTelegram } from "./handlers/admin";
 import {
@@ -131,7 +133,11 @@ import {
   showToolsMenu,
   clearAllReservations,
   showRecentPurchasesForRefund,
+  showRefundConfirm,
   doRefund,
+  showPaymentRecoveryMenu,
+  showOrderRecoveryById,
+  renderOrderRecovery,
   showBackupTokens,
   deleteBackupToken,
   showChangeWallet,
@@ -181,6 +187,38 @@ import {
 } from "./handlers/payments";
 import { formatEur } from "./utils";
 import { inlineKeyboard, BACK_BTN } from "./keyboards";
+
+// Credit an admin-granted balance top-up and notify the user. Returns the new
+// balance, or null if the target user no longer exists. Shared by the Tools and
+// user-profile confirmation flows.
+async function applyAddBalance(
+  telegram: Telegraf["telegram"],
+  targetId: number,
+  amount: number,
+): Promise<number | null> {
+  const user = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, targetId))
+    .then((r) => r[0]);
+  if (!user) return null;
+  // Relative, atomic update so concurrent credits/debits (refunds, top-ups,
+  // other admin grants) can't clobber each other via read-then-write.
+  const [updated] = await db
+    .update(usersTable)
+    .set({ balance: sql`${usersTable.balance} + ${amount}` })
+    .where(eq(usersTable.telegramId, targetId))
+    .returning({ balance: usersTable.balance });
+  const newBal = Number(updated?.balance ?? 0);
+  try {
+    await telegram.sendMessage(
+      targetId,
+      `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
+    );
+  } catch {}
+  await refreshAdminLiveStatsNow();
+  return newBal;
+}
 
 export function createBot(token?: string): Telegraf {
   const botToken = token ?? process.env["BOT_TOKEN"];
@@ -526,27 +564,104 @@ export function createBot(token?: string): Telegraf {
 
     if (step === "admin:search_user") {
       ctx.session.step = undefined;
-      await showUserProfile(ctx, text.trim());
+      const query = text.trim();
+      const matches = await searchUsers(query);
+      if (matches.length === 0) {
+        await ctx.reply(
+          "No users found.",
+          inlineKeyboard([[BACK_BTN("admin:users")]]),
+        );
+        return;
+      }
+      if (matches.length === 1) {
+        await showUserProfile(ctx, String(matches[0]!.telegramId));
+        return;
+      }
+      const rows = matches.map((u) => [
+        {
+          text: u.username ? `@${u.username}` : `ID ${u.telegramId}`,
+          callback_data: `users:view:${u.telegramId}`,
+        },
+      ]);
+      rows.push([BACK_BTN("admin:users")]);
+      await ctx.reply(
+        `🔍 <b>${matches.length} matches</b> — pick one:`,
+        { parse_mode: "HTML", ...inlineKeyboard(rows) },
+      );
       return;
     }
 
     if (step === "admin:broadcast") {
+      ctx.session.step = undefined;
       const users = await db.select().from(usersTable);
+      const total = users.length;
       let sent = 0;
       let failed = 0;
-      await ctx.reply("📢 Broadcasting…");
-      for (const u of users) {
-        try {
-          await bot.telegram.sendMessage(u.telegramId, text, {
-            parse_mode: "HTML",
-          });
-          sent++;
-        } catch {
-          failed++;
+
+      const progress = await ctx.reply(
+        `📢 Broadcasting to ${total} user${total === 1 ? "" : "s"}…`,
+      );
+      const progressChatId = progress.chat.id;
+      const progressMsgId = progress.message_id;
+
+      // Telegram allows ~30 messages/sec to different users. We stay well under
+      // that with a fixed batch size and a pause between batches, and back off
+      // when Telegram explicitly asks us to (429 with retry_after).
+      const BATCH_SIZE = 25;
+      const BATCH_PAUSE_MS = 1100;
+      const sleep = (ms: number) =>
+        new Promise<void>((r) => setTimeout(r, ms));
+
+      const sendOne = async (telegramId: number): Promise<boolean> => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await bot.telegram.sendMessage(telegramId, text, {
+              parse_mode: "HTML",
+            });
+            return true;
+          } catch (err: any) {
+            const retryAfter = err?.parameters?.retry_after;
+            if (retryAfter) {
+              // Flood limit hit — wait the requested cooldown, then retry.
+              await sleep((retryAfter + 1) * 1000);
+              continue;
+            }
+            // Any other error (user blocked the bot, deactivated, etc.) is
+            // permanent for this recipient — count it as failed and move on.
+            return false;
+          }
         }
+        return false;
+      };
+
+      for (let i = 0; i < total; i += BATCH_SIZE) {
+        const batch = users.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map((u) => sendOne(u.telegramId)),
+        );
+        for (const ok of results) ok ? sent++ : failed++;
+
+        await bot.telegram
+          .editMessageText(
+            progressChatId,
+            progressMsgId,
+            undefined,
+            `📢 Broadcasting… ${sent + failed}/${total} processed (${sent} ✅ / ${failed} ❌)`,
+          )
+          .catch(() => {});
+
+        if (i + BATCH_SIZE < total) await sleep(BATCH_PAUSE_MS);
       }
-      ctx.session.step = undefined;
-      await ctx.reply(`✅ Broadcast complete: ${sent} sent, ${failed} failed.`);
+
+      await bot.telegram
+        .editMessageText(
+          progressChatId,
+          progressMsgId,
+          undefined,
+          `✅ <b>Broadcast complete</b>\n\n📨 Delivered: <b>${sent}</b>\n⚠️ Failed: <b>${failed}</b>\n👥 Total: <b>${total}</b>`,
+          { parse_mode: "HTML" },
+        )
+        .catch(() => {});
       await showCommsMenu(ctx);
       return;
     }
@@ -679,23 +794,27 @@ export function createBot(token?: string): Telegraf {
         .where(eq(usersTable.telegramId, targetId))
         .then((r) => r[0]);
       if (!user) return ctx.reply("User not found.");
-      const newBal = Number(user.balance) + amount;
-      await db
-        .update(usersTable)
-        .set({ balance: newBal.toFixed(2) })
-        .where(eq(usersTable.telegramId, targetId));
       ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      const newBal = Number(user.balance) + amount;
       await ctx.reply(
-        `✅ Added ${formatEur(amount)} to user ${targetId}. New balance: ${formatEur(newBal)}.`,
+        `⚠️ <b>Confirm Balance Top-Up</b>\n\n` +
+          `User: <code>${targetId}</code>\n` +
+          `Add: <b>${formatEur(amount)}</b>\n` +
+          `New balance: <b>${formatEur(newBal)}</b>`,
+        {
+          parse_mode: "HTML",
+          ...inlineKeyboard([
+            [
+              {
+                text: "✅ Confirm",
+                callback_data: `tools:confirm_add_balance:${targetId}:${amount.toFixed(2)}`,
+              },
+            ],
+            [BACK_BTN("admin:tools")],
+          ]),
+        },
       );
-      try {
-        await bot.telegram.sendMessage(
-          targetId,
-          `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
-        );
-      } catch {}
-      await refreshAdminLiveStatsNow();
-      await showToolsMenu(ctx);
       return;
     }
 
@@ -732,23 +851,27 @@ export function createBot(token?: string): Telegraf {
         .where(eq(usersTable.telegramId, targetId))
         .then((r) => r[0]);
       if (!user) return ctx.reply("User not found.");
-      const newBal = Number(user.balance) + amount;
-      await db
-        .update(usersTable)
-        .set({ balance: newBal.toFixed(2) })
-        .where(eq(usersTable.telegramId, targetId));
       ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      const newBal = Number(user.balance) + amount;
       await ctx.reply(
-        `✅ Added ${formatEur(amount)} to user ${targetId}. New balance: ${formatEur(newBal)}.`,
+        `⚠️ <b>Confirm Balance Top-Up</b>\n\n` +
+          `User: <code>${targetId}</code>\n` +
+          `Add: <b>${formatEur(amount)}</b>\n` +
+          `New balance: <b>${formatEur(newBal)}</b>`,
+        {
+          parse_mode: "HTML",
+          ...inlineKeyboard([
+            [
+              {
+                text: "✅ Confirm",
+                callback_data: `users:confirm_add_bal:${targetId}:${amount.toFixed(2)}`,
+              },
+            ],
+            [{ text: "✖ Cancel", callback_data: `users:view:${targetId}` }],
+          ]),
+        },
       );
-      try {
-        await bot.telegram.sendMessage(
-          targetId,
-          `💰 Your balance has been topped up by ${formatEur(amount)}. New balance: ${formatEur(newBal)}.`,
-        );
-      } catch {}
-      await refreshAdminLiveStatsNow();
-      await showUserProfile(ctx, String(targetId));
       return;
     }
 
@@ -802,23 +925,7 @@ export function createBot(token?: string): Telegraf {
       if (!purchase) {
         return ctx.reply("Order not found.");
       }
-      const product = await db
-        .select()
-        .from(productsTable)
-        .where(eq(productsTable.id, purchase.productId))
-        .then((r) => r[0]);
-      let msg =
-        `📦 Order <code>${purchase.queueId}</code>\n` +
-        `User: ${purchase.userId}\n` +
-        `Paid: ${formatEur(purchase.pricePaid)}\n` +
-        `Method: ${purchase.paymentMethod}\n` +
-        `Status: ${purchase.refunded ? "Refunded" : "Completed"}`;
-      await ctx.reply(msg, { parse_mode: "HTML" });
-      if (product) {
-        const { sendProductMedia } = await import("./handlers/payments");
-        await sendProductMedia(ctx, product);
-      }
-      await showToolsMenu(ctx);
+      await renderOrderRecovery(ctx, purchase);
       return;
     }
 
@@ -1417,10 +1524,16 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "del") {
           const productId = parseInt(parts[1]!);
+          // Hard-delete, but only while the unit is still available. Sold units
+          // are kept so purchase history and refunds stay intact.
           await db
-            .update(productsTable)
-            .set({ status: "sold" })
-            .where(eq(productsTable.id, productId));
+            .delete(productsTable)
+            .where(
+              and(
+                eq(productsTable.id, productId),
+                eq(productsTable.status, "available"),
+              ),
+            );
           await ctx.answerCbQuery("Product deleted.");
           const page = parseInt(parts[5] ?? "0");
           return showProductList(
@@ -1431,7 +1544,27 @@ export function createBot(token?: string): Telegraf {
             page,
           );
         }
-        if (sub === "delall")
+        if (sub === "delall") {
+          const c = parseInt(parts[1]!);
+          const d = parseInt(parts[2]!);
+          const t = parseInt(parts[3]!);
+          return ctx.editMessageText(
+            "⚠️ <b>Delete ALL available stock</b> for this city/district/type?\n\nThis permanently removes every available unit here. Sold units are kept.",
+            {
+              parse_mode: "HTML",
+              ...inlineKeyboard([
+                [
+                  {
+                    text: "🗑 Yes, delete all",
+                    callback_data: `manage_prod:confirm_delall:${c}:${d}:${t}`,
+                  },
+                ],
+                [BACK_BTN(`manage_prod:dist:${c}:${d}`)],
+              ]),
+            },
+          );
+        }
+        if (sub === "confirm_delall")
           return deleteAllProducts(
             ctx,
             parseInt(parts[1]!),
@@ -1447,9 +1580,48 @@ export function createBot(token?: string): Telegraf {
         if (sub === "search") {
           ctx.session.step = "admin:search_user";
           return ctx.editMessageText(
-            "Enter @username or Telegram ID:",
+            "Enter a Telegram ID or part of a @username:",
             inlineKeyboard([[BACK_BTN("admin:users")]]),
           );
+        }
+        if (sub === "recent") {
+          const recent = await getRecentlyActiveUsers();
+          if (recent.length === 0) {
+            return ctx.editMessageText("No users yet.", {
+              ...inlineKeyboard([[BACK_BTN("admin:users")]]),
+            });
+          }
+          const rows = recent.map((u) => [
+            {
+              text: u.username ? `@${u.username}` : `ID ${u.telegramId}`,
+              callback_data: `users:view:${u.telegramId}`,
+            },
+          ]);
+          rows.push([BACK_BTN("admin:users")]);
+          return ctx.editMessageText("🕒 <b>Recently Active Users</b>", {
+            parse_mode: "HTML",
+            ...inlineKeyboard(rows),
+          });
+        }
+        if (sub === "view")
+          return showUserProfile(ctx, String(parseInt(parts[1]!)));
+        if (sub === "confirm_add_bal") {
+          const targetId = parseInt(parts[1]!);
+          const amount = parseFloat(parts[2]!);
+          if (isNaN(targetId) || isNaN(amount) || amount <= 0) {
+            await ctx.answerCbQuery("Nothing to confirm.", { show_alert: true });
+            return showUsersMenu(ctx);
+          }
+          const newBal = await applyAddBalance(bot.telegram, targetId, amount);
+          if (newBal === null) {
+            await ctx.answerCbQuery("User not found.", { show_alert: true });
+            return showUsersMenu(ctx);
+          }
+          await ctx.answerCbQuery(
+            `Added ${formatEur(amount)}. New balance ${formatEur(newBal)}.`,
+            { show_alert: true },
+          );
+          return showUserProfile(ctx, String(targetId));
         }
         if (sub === "ban") return banUser(ctx, parseInt(parts[1]!));
         if (sub === "unban") return unbanUser(ctx, parseInt(parts[1]!));
@@ -1697,15 +1869,38 @@ export function createBot(token?: string): Telegraf {
         if (!(await isAdmin(ctx.from.id))) return;
         const sub = parts[0];
         if (sub === "clear_res") return clearAllReservations(ctx);
-        if (sub === "payment_recovery") {
+        if (sub === "payment_recovery") return showPaymentRecoveryMenu(ctx);
+        if (sub === "recover_manual") {
           ctx.session.step = "admin:payment_recovery";
           return ctx.editMessageText(
             "Enter the Queue ID to look up:",
-            inlineKeyboard([[BACK_BTN("admin:tools")]]),
+            inlineKeyboard([[BACK_BTN("tools:payment_recovery")]]),
           );
         }
+        if (sub === "recover")
+          return showOrderRecoveryById(ctx, parseInt(parts[1]!));
         if (sub === "refund") return showRecentPurchasesForRefund(ctx);
-        if (sub === "do_refund") return doRefund(ctx, parseInt(parts[1]!));
+        if (sub === "do_refund") return showRefundConfirm(ctx, parseInt(parts[1]!));
+        if (sub === "confirm_refund")
+          return doRefund(ctx, parseInt(parts[1]!));
+        if (sub === "confirm_add_balance") {
+          const targetId = parseInt(parts[1]!);
+          const amount = parseFloat(parts[2]!);
+          if (isNaN(targetId) || isNaN(amount) || amount <= 0) {
+            await ctx.answerCbQuery("Nothing to confirm.", { show_alert: true });
+            return showToolsMenu(ctx);
+          }
+          const newBal = await applyAddBalance(bot.telegram, targetId, amount);
+          if (newBal === null) {
+            await ctx.answerCbQuery("User not found.", { show_alert: true });
+            return showToolsMenu(ctx);
+          }
+          await ctx.editMessageText(
+            `✅ Added ${formatEur(amount)} to user <code>${targetId}</code>. New balance: <b>${formatEur(newBal)}</b>.`,
+            { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("admin:tools")]]) },
+          );
+          return;
+        }
         if (sub === "backup_tokens") return showBackupTokens(ctx);
         if (sub === "del_token") return deleteBackupToken(ctx, parseInt(parts[1]!));
         if (sub === "add_token") {

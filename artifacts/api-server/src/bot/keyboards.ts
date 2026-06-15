@@ -150,6 +150,7 @@ export const ANALYTICS_KB = inlineKeyboard([
 
 export const USERS_MENU_KB = inlineKeyboard([
   [{ text: "🔍 Search User", callback_data: "users:search" }],
+  [{ text: "🕒 Recently Active", callback_data: "users:recent" }],
   [{ text: "👑 Manage Resellers", callback_data: "users:resellers" }],
   [{ text: "📥 Export Users CSV", callback_data: "users:export" }],
   [BACK_BTN("admin:main")],

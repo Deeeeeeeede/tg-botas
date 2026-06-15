@@ -80,6 +80,134 @@ export async function showRecentPurchasesForRefund(ctx: Context & { session: Bot
   });
 }
 
+// Confirmation gate before a refund actually runs. Refunds credit real balance
+// and cannot be undone, so the admin must explicitly confirm first.
+export async function showRefundConfirm(
+  ctx: Context & { session: BotSession },
+  purchaseId: number,
+) {
+  const purchase = await db
+    .select()
+    .from(purchasesTable)
+    .where(eq(purchasesTable.id, purchaseId))
+    .then((r) => r[0]);
+  if (!purchase || purchase.refunded) {
+    await ctx.answerCbQuery("Purchase not found or already refunded.", {
+      show_alert: true,
+    });
+    return;
+  }
+  await ctx.editMessageText(
+    `⚠️ <b>Confirm Refund</b>\n\n` +
+      `Order: <code>${purchase.queueId}</code>\n` +
+      `User: <code>${purchase.userId}</code>\n` +
+      `Amount: <b>${formatEur(purchase.pricePaid)}</b>\n\n` +
+      `This credits the buyer's balance and cannot be undone.`,
+    {
+      parse_mode: "HTML",
+      ...inlineKeyboard([
+        [
+          {
+            text: "✅ Yes, refund",
+            callback_data: `tools:confirm_refund:${purchaseId}`,
+          },
+        ],
+        [{ text: "✖ Cancel", callback_data: "tools:refund" }],
+      ]),
+    },
+  );
+}
+
+// Payment recovery landing screen: a quick picker of the most recent orders plus
+// a manual Queue ID lookup. Saves the admin from having to know the Queue ID by
+// heart for the common "look up the last order" case.
+export async function showPaymentRecoveryMenu(
+  ctx: Context & { session: BotSession },
+) {
+  ctx.session.step = undefined;
+  const purchases = await db
+    .select({
+      id: purchasesTable.id,
+      queueId: purchasesTable.queueId,
+      userId: purchasesTable.userId,
+      price: purchasesTable.pricePaid,
+      createdAt: purchasesTable.createdAt,
+    })
+    .from(purchasesTable)
+    .orderBy(desc(purchasesTable.createdAt))
+    .limit(10);
+
+  const rows = purchases.map((p) => [
+    {
+      text: `${p.queueId} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
+      callback_data: `tools:recover:${p.id}`,
+    },
+  ]);
+  rows.push([
+    { text: "🔎 Look up by Queue ID", callback_data: "tools:recover_manual" },
+  ]);
+  rows.push([BACK_BTN("admin:tools")]);
+
+  const intro = purchases.length
+    ? "Pick a recent order, or look one up by Queue ID:"
+    : "No orders yet. You can still look one up by Queue ID:";
+  await ctx.editMessageText(`🛟 <b>Payment Recovery</b>\n\n${intro}`, {
+    parse_mode: "HTML",
+    ...inlineKeyboard(rows),
+  });
+}
+
+type RecoverablePurchase = {
+  queueId: string;
+  userId: number;
+  pricePaid: string;
+  paymentMethod: string;
+  refunded: boolean;
+  productId: number;
+};
+
+// Render a single order's recovery details and re-deliver its product content.
+// Shared by the recent-order picker and the manual Queue ID lookup.
+export async function renderOrderRecovery(
+  ctx: Context & { session: BotSession },
+  purchase: RecoverablePurchase,
+) {
+  const product = await db
+    .select()
+    .from(productsTable)
+    .where(eq(productsTable.id, purchase.productId))
+    .then((r) => r[0]);
+  const msg =
+    `📦 Order <code>${purchase.queueId}</code>\n` +
+    `User: <code>${purchase.userId}</code>\n` +
+    `Paid: ${formatEur(purchase.pricePaid)}\n` +
+    `Method: ${purchase.paymentMethod}\n` +
+    `Status: ${purchase.refunded ? "Refunded" : "Completed"}`;
+  await ctx.reply(msg, { parse_mode: "HTML" });
+  if (product) {
+    const { sendProductMedia } = await import("./payments");
+    await sendProductMedia(ctx, product);
+  }
+  await showToolsMenu(ctx);
+}
+
+// Recover a recent order chosen from the picker (by internal purchase id).
+export async function showOrderRecoveryById(
+  ctx: Context & { session: BotSession },
+  purchaseId: number,
+) {
+  const purchase = await db
+    .select()
+    .from(purchasesTable)
+    .where(eq(purchasesTable.id, purchaseId))
+    .then((r) => r[0]);
+  if (!purchase) {
+    await ctx.answerCbQuery("Order not found.", { show_alert: true });
+    return;
+  }
+  await renderOrderRecovery(ctx, purchase);
+}
+
 export async function doRefund(ctx: Context & { session: BotSession }, purchaseId: number) {
   const purchase = await db
     .select()

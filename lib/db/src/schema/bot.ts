@@ -43,6 +43,7 @@ export const usersTable = pgTable("bot_users", {
   eurSpent: numeric("eur_spent", { precision: 12, scale: 2 }).notNull().default("0"),
   tierName: text("tier_name").notNull().default("New"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  lastActiveAt: timestamp("last_active_at").notNull().defaultNow(),
 });
 
 export const adminsTable = pgTable("bot_admins", {

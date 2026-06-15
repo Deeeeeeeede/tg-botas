@@ -55,6 +55,12 @@ type LiveInvoice = {
   kind: "purchase" | "topup";
   topupInvoiceId?: number;
   lastText?: string;
+  // On-chain auto-confirm bookkeeping.
+  lastChecked?: number;
+  solAmount?: number;
+  expectedEur?: number;
+  createdAt?: number;
+  purchase?: PurchaseDescriptor;
 };
 const pendingInvoices = new Map<number, LiveInvoice>();
 
@@ -84,6 +90,10 @@ export function cancelPendingInvoice(userId: number) {
 // `telegram` reference is updated on each call so edits use the live instance.
 let invoiceTickerStarted = false;
 let invoiceTelegram: any = null;
+let tickerRunning = false;
+// How often to poll the chain per invoice. The countdown still updates every
+// tick; on-chain checks are throttled to stay well within RPC rate limits.
+const AUTO_CONFIRM_INTERVAL_MS = 15000;
 export function startInvoiceBackgroundChecker(telegram: any) {
   invoiceTelegram = telegram;
   if (invoiceTickerStarted) return;
@@ -91,6 +101,20 @@ export function startInvoiceBackgroundChecker(telegram: any) {
   setInterval(async () => {
     const telegram = invoiceTelegram;
     if (!telegram) return;
+    // Skip this tick if the previous one is still working (on-chain checks can
+    // take several seconds each), so polls never pile up or overlap.
+    if (tickerRunning) return;
+    tickerRunning = true;
+    try {
+      await runInvoiceTick(telegram);
+    } finally {
+      tickerRunning = false;
+    }
+  }, 5000);
+}
+
+async function runInvoiceTick(telegram: any) {
+  {
     const now = Date.now();
     for (const [userId, inv] of Array.from(pendingInvoices.entries())) {
       if (now >= inv.expiresAt) {
@@ -126,6 +150,27 @@ export function startInvoiceBackgroundChecker(telegram: any) {
         continue;
       }
 
+      // Auto-confirm: poll the chain (throttled) and finalize without any user
+      // action. If finalized, the invoice is gone — skip the countdown render.
+      if (
+        !inv.lastChecked ||
+        now - inv.lastChecked >= AUTO_CONFIRM_INTERVAL_MS
+      ) {
+        inv.lastChecked = now;
+        try {
+          let finalized = false;
+          if (inv.kind === "purchase") {
+            finalized = await autoConfirmPurchaseInvoice(telegram, userId, inv);
+          } else if (inv.kind === "topup") {
+            const { autoConfirmTopupInvoice } = await import("./topup");
+            finalized = await autoConfirmTopupInvoice(telegram, userId, inv);
+          }
+          if (finalized) continue;
+        } catch {
+          // Network/RPC error — leave the invoice pending and retry next cycle.
+        }
+      }
+
       const text = inv.baseText + "\n\n" + countdownLine(inv.expiresAt);
       if (text === inv.lastText) continue;
       inv.lastText = text;
@@ -136,7 +181,7 @@ export function startInvoiceBackgroundChecker(telegram: any) {
         })
         .catch(() => {});
     }
-  }, 5000);
+  }
 }
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -291,6 +336,7 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
   const messageId = (ctx.callbackQuery?.message as { message_id?: number })
     ?.message_id;
   if (messageId) {
+    const isPaynow = Boolean(data["paynow"]);
     registerPendingInvoice(telegramId, {
       chatId,
       messageId,
@@ -298,8 +344,90 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
       baseText,
       keyboard,
       kind: "purchase",
+      solAmount,
+      expectedEur: eurAmount,
+      createdAt: Date.now(),
+      purchase: {
+        isPaynow,
+        discountCode: data["appliedCode"] as string | undefined,
+        discountedTotal: eurAmount,
+        paynowSpec: isPaynow
+          ? {
+              cityId: data["cityId"] as number,
+              districtId: data["districtId"] as number,
+              typeId: data["typeId"] as number,
+              size: data["size"] as string,
+            }
+          : undefined,
+      },
     });
   }
+}
+
+// Scan the shop wallet's recent transactions for an incoming payment of at least
+// `expectedSol` (with a 1% tolerance) that arrived after the invoice was created.
+// Returns the matching signature + received amount, or null if none found yet.
+// Throws on network/RPC failure so callers can distinguish "not paid" from
+// "couldn't check". Shared by the manual "Check Payment" tap and the background
+// auto-confirm ticker.
+export async function scanForPayment(
+  expectedSol: number,
+  createdAt: number,
+): Promise<{ signature: string; receivedSol: number } | null> {
+  const wallet = await getSolWallet();
+  const sigCtrl = new AbortController();
+  const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
+  const sigRes = await fetch(SOL_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getSignaturesForAddress",
+      params: [wallet, { limit: 25 }],
+    }),
+    signal: sigCtrl.signal,
+  }).finally(() => clearTimeout(sigTimer));
+  const sigData = (await sigRes.json()) as any;
+  const signatures: any[] = sigData?.result ?? [];
+
+  for (const sig of signatures) {
+    if (sig.err) continue;
+    if (sig.blockTime && sig.blockTime * 1000 < createdAt - 60000) continue;
+
+    const txCtrl = new AbortController();
+    const txTimer = setTimeout(() => txCtrl.abort(), 12000);
+    const txRes = await fetch(SOL_RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTransaction",
+        params: [
+          sig.signature,
+          { encoding: "json", maxSupportedTransactionVersion: 0 },
+        ],
+      }),
+      signal: txCtrl.signal,
+    }).finally(() => clearTimeout(txTimer));
+    const txData = (await txRes.json()) as any;
+    const tx = txData?.result;
+    if (!tx) continue;
+
+    const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
+    const walletIndex = accountKeys.indexOf(wallet);
+    if (walletIndex === -1) continue;
+
+    const pre = tx.meta?.preBalances?.[walletIndex] ?? 0;
+    const post = tx.meta?.postBalances?.[walletIndex] ?? 0;
+    const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
+
+    if (receivedSol >= expectedSol * 0.99) {
+      return { signature: sig.signature, receivedSol };
+    }
+  }
+  return null;
 }
 
 export async function checkSolPayment(
@@ -337,72 +465,24 @@ export async function checkSolPayment(
   // The global callback_query middleware already answered this callback, so the
   // loading spinner is dismissed; the live ticker keeps the countdown moving.
   try {
-    const sigCtrl = new AbortController();
-    const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
-    const sigRes = await fetch(SOL_RPC, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getSignaturesForAddress",
-        params: [(await getSolWallet()), { limit: 25 }],
-      }),
-      signal: sigCtrl.signal,
-    }).finally(() => clearTimeout(sigTimer));
-    const sigData = (await sigRes.json()) as any;
-    const signatures: any[] = sigData?.result ?? [];
-
-    for (const sig of signatures) {
-      if (sig.err) continue;
-      if (sig.blockTime && sig.blockTime * 1000 < createdAt - 60000) continue;
-
-      const txCtrl = new AbortController();
-      const txTimer = setTimeout(() => txCtrl.abort(), 12000);
-      const txRes = await fetch(SOL_RPC, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getTransaction",
-          params: [
-            sig.signature,
-            { encoding: "json", maxSupportedTransactionVersion: 0 },
-          ],
-        }),
-        signal: txCtrl.signal,
-      }).finally(() => clearTimeout(txTimer));
-      const txData = (await txRes.json()) as any;
-      const tx = txData?.result;
-      if (!tx) continue;
-
-      const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
-      const walletIndex = accountKeys.indexOf(await getSolWallet());
-      if (walletIndex === -1) continue;
-
-      const pre = tx.meta?.preBalances?.[walletIndex] ?? 0;
-      const post = tx.meta?.postBalances?.[walletIndex] ?? 0;
-      const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
-
-      if (receivedSol >= expectedSol * 0.99) {
-        // Atomically claim this transaction. If another handler already
-        // consumed it (purchase or top-up), skip it — never credit twice.
-        const claimed = await claimSignature(
-          sig.signature,
-          ctx.from!.id,
-          "purchase",
-          receivedSol,
-        );
-        if (!claimed) continue;
-
+    const hit = await scanForPayment(expectedSol, createdAt);
+    if (hit) {
+      // Atomically claim this transaction. If another handler already
+      // consumed it (purchase or top-up), skip it — never credit twice.
+      const claimed = await claimSignature(
+        hit.signature,
+        ctx.from!.id,
+        "purchase",
+        hit.receivedSol,
+      );
+      if (claimed) {
         const solPrice = await getSolPrice();
-        const paidEur = receivedSol * solPrice;
+        const paidEur = hit.receivedSol * solPrice;
         const expectedEur = Number(
           data["discountedTotal"] ?? data["pendingEur"] ?? 0,
         );
         const overpayEur = Math.max(0, paidEur - expectedEur);
-        await completePurchase(ctx, "sol", overpayEur, sig.signature);
+        await completePurchase(ctx, "sol", overpayEur, hit.signature);
         return;
       }
     }
@@ -414,6 +494,42 @@ export async function checkSolPayment(
       .reply("⚠️ Could not reach Solana network. Please try again.")
       .catch(() => {});
   }
+}
+
+// Background auto-confirm for a purchase invoice. Returns true when the invoice
+// has been finalized (and removed from the registry), false when still pending.
+// Mirrors checkSolPayment's logic but runs without a Telegraf Context.
+async function autoConfirmPurchaseInvoice(
+  telegram: any,
+  userId: number,
+  inv: LiveInvoice,
+): Promise<boolean> {
+  if (!inv.purchase || !inv.solAmount || !inv.createdAt) return false;
+  const hit = await scanForPayment(inv.solAmount, inv.createdAt);
+  if (!hit) return false;
+  const claimed = await claimSignature(
+    hit.signature,
+    userId,
+    "purchase",
+    hit.receivedSol,
+  );
+  // If the signature was already claimed elsewhere, the other path is
+  // finalizing this same payment — treat the invoice as done and stop polling.
+  if (!claimed) return true;
+  const solPrice = await getSolPrice();
+  const paidEur = hit.receivedSol * solPrice;
+  const overpayEur = Math.max(0, paidEur - (inv.expectedEur ?? 0));
+  await finalizePurchase(
+    telegram,
+    userId,
+    inv.chatId,
+    inv.purchase,
+    "sol",
+    overpayEur,
+    hit.signature,
+    inv.messageId,
+  );
+  return true;
 }
 
 // Atomically claim an on-chain Solana transaction signature so it can be
@@ -440,21 +556,49 @@ export async function claimSignature(
   return rows.length > 0;
 }
 
-export async function completePurchase(
-  ctx: Context & { session: BotSession },
+// Describes everything needed to fulfil a purchase WITHOUT a Telegraf Context,
+// so the same finalization logic can run from a user tap (completePurchase) or
+// from the background auto-confirm ticker (finalizePurchase).
+export type PurchaseDescriptor = {
+  isPaynow: boolean;
+  discountCode?: string;
+  discountedTotal: number;
+  paynowSpec?: { cityId: number; districtId: number; typeId: number; size: string };
+};
+
+// Context-free purchase finalization. Delivers all messages/media through the
+// raw Telegram client so it works both for interactive taps and the background
+// auto-confirm ticker. When editMessageId is provided, the result is rendered by
+// editing that message (the live invoice); otherwise messages are sent fresh.
+export async function finalizePurchase(
+  telegram: any,
+  telegramId: number,
+  chatId: number,
+  desc: PurchaseDescriptor,
   paymentMethod: string,
   overpayEur = 0,
   txSignature?: string,
+  editMessageId?: number,
 ): Promise<void> {
-  const telegramId = ctx.from!.id;
   cancelPendingInvoice(telegramId);
   const user = await getUser(telegramId);
   if (!user) return;
 
-  const data = ctx.session.data ?? {};
-  const isPaynow = Boolean(data["paynow"]);
-  const discountCode = data["appliedCode"] as string | undefined;
-  const discountedTotal = Number(data["discountedTotal"] ?? 0);
+  const { isPaynow, discountCode, discountedTotal } = desc;
+
+  const editOrSend = async (text: string, kb?: InlineKb) => {
+    const extra: Record<string, unknown> = { parse_mode: "HTML" };
+    if (kb) extra["reply_markup"] = { inline_keyboard: kb };
+    if (editMessageId) {
+      try {
+        await telegram.editMessageText(chatId, editMessageId, undefined, text, extra);
+        return;
+      } catch {
+        // fall through to a fresh message
+      }
+    }
+    await telegram.sendMessage(chatId, text, extra).catch(() => {});
+  };
 
   type Spec = {
     cityId: number;
@@ -467,12 +611,13 @@ export async function completePurchase(
   let specs: Spec[];
 
   if (isPaynow) {
+    const ps = desc.paynowSpec!;
     specs = [
       {
-        cityId: data["cityId"] as number,
-        districtId: data["districtId"] as number,
-        typeId: data["typeId"] as number,
-        size: data["size"] as string,
+        cityId: ps.cityId,
+        districtId: ps.districtId,
+        typeId: ps.typeId,
+        size: ps.size,
         price: discountedTotal,
       },
     ];
@@ -490,20 +635,12 @@ export async function completePurchase(
       }
       const { refreshAdminLiveStatsNow } = await import("./admin");
       refreshAdminLiveStatsNow();
-      ctx.session.step = undefined;
-      ctx.session.data = undefined;
-      if (ctx.callbackQuery) {
-        await ctx.editMessageText(
-          refundTotal > 0
-            ? "⚠️ Your basket was empty, so your payment was added to your balance."
-            : "⚠️ Basket is empty. Please add items and try again.",
-          {
-            ...inlineKeyboard([
-              [{ text: "🏠 Home", callback_data: "shop:home" }],
-            ]),
-          },
-        );
-      }
+      await editOrSend(
+        refundTotal > 0
+          ? "⚠️ Your basket was empty, so your payment was added to your balance."
+          : "⚠️ Basket is empty. Please add items and try again.",
+        [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+      );
       return;
     }
     const perItemPrice =
@@ -570,27 +707,18 @@ export async function completePurchase(
   if (purchased.length === 0) {
     const refundTotal = discountedTotal + overpayEur;
     if (refundTotal > 0) {
-      const freshUser = await getUser(telegramId);
       await db
         .update(usersTable)
-        .set({ balance: (Number(freshUser!.balance) + refundTotal).toFixed(2) })
+        .set({ balance: sql`${usersTable.balance} + ${refundTotal}` })
         .where(eq(usersTable.telegramId, telegramId));
     }
     const { refreshAdminLiveStatsNow } = await import("./admin");
     refreshAdminLiveStatsNow();
-    ctx.session.step = undefined;
-    ctx.session.data = undefined;
     if (!isPaynow) await releaseBasket(telegramId);
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(
-        "⚠️ Sorry, all items went out of stock just now. Your balance has been refunded.",
-        {
-          ...inlineKeyboard([
-            [{ text: "🏠 Home", callback_data: "shop:home" }],
-          ]),
-        },
-      );
-    }
+    await editOrSend(
+      "⚠️ Sorry, all items went out of stock just now. Your balance has been refunded.",
+      [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+    );
     return;
   }
 
@@ -606,10 +734,9 @@ export async function completePurchase(
 
   const totalCredit = overpayEur + unpurchasedRefund;
   if (totalCredit > 0) {
-    const freshUser = await getUser(telegramId);
     await db
       .update(usersTable)
-      .set({ balance: (Number(freshUser!.balance) + totalCredit).toFixed(2) })
+      .set({ balance: sql`${usersTable.balance} + ${totalCredit}` })
       .where(eq(usersTable.telegramId, telegramId));
     const { refreshAdminLiveStatsNow } = await import("./admin");
     refreshAdminLiveStatsNow();
@@ -625,9 +752,6 @@ export async function completePurchase(
     .where(eq(usersTable.telegramId, telegramId));
 
   await updateUserTier(telegramId);
-
-  ctx.session.step = undefined;
-  ctx.session.data = undefined;
 
   let msg =
     `✅ <b>Purchase Successful!</b>\n\n` +
@@ -653,19 +777,59 @@ export async function completePurchase(
     productsToDeliver.push(product);
   }
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(msg, { parse_mode: "HTML" });
-  } else {
-    await ctx.reply(msg, { parse_mode: "HTML" });
-  }
+  await editOrSend(msg);
 
   for (const product of productsToDeliver) {
-    await sendProductMedia(ctx, product);
+    await sendProductMediaTo(telegram, chatId, product);
   }
 
-  await ctx.reply("Thank you for your purchase! 🙏", {
-    ...inlineKeyboard([[{ text: "🏠 Home", callback_data: "shop:home" }]]),
-  });
+  await telegram
+    .sendMessage(chatId, "Thank you for your purchase! 🙏", {
+      reply_markup: {
+        inline_keyboard: [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+      },
+    })
+    .catch(() => {});
+}
+
+// Thin Context wrapper around finalizePurchase: reads the purchase descriptor
+// from the session, clears it, and delegates to the context-free core.
+export async function completePurchase(
+  ctx: Context & { session: BotSession },
+  paymentMethod: string,
+  overpayEur = 0,
+  txSignature?: string,
+): Promise<void> {
+  const telegramId = ctx.from!.id;
+  const data = ctx.session.data ?? {};
+  const isPaynow = Boolean(data["paynow"]);
+  const desc: PurchaseDescriptor = {
+    isPaynow,
+    discountCode: data["appliedCode"] as string | undefined,
+    discountedTotal: Number(data["discountedTotal"] ?? 0),
+    paynowSpec: isPaynow
+      ? {
+          cityId: data["cityId"] as number,
+          districtId: data["districtId"] as number,
+          typeId: data["typeId"] as number,
+          size: data["size"] as string,
+        }
+      : undefined,
+  };
+  const editMessageId = (ctx.callbackQuery?.message as { message_id?: number })
+    ?.message_id;
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
+  await finalizePurchase(
+    ctx.telegram,
+    telegramId,
+    ctx.chat!.id,
+    desc,
+    paymentMethod,
+    overpayEur,
+    txSignature,
+    editMessageId,
+  );
 }
 
 export async function sendProductMedia(ctx: any, product: any) {
@@ -695,6 +859,45 @@ export async function sendProductMedia(ctx: any, product: any) {
       else if (f.fileType === "text")
         // Text stored in mediaFiles uses fileId as the raw text value.
         await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
+    } catch {}
+  }
+}
+
+// Context-free variant of sendProductMedia used by the background auto-confirm
+// flow, which has no Telegraf Context — delivers media via the raw client.
+export async function sendProductMediaTo(
+  telegram: any,
+  chatId: number,
+  product: any,
+) {
+  const files: { fileId: string; fileType: string }[] = [];
+
+  if (product.fileId && product.fileType !== "text") {
+    files.push({ fileId: product.fileId, fileType: product.fileType });
+  }
+
+  if (product.mediaFiles) {
+    try {
+      const extra = JSON.parse(product.mediaFiles) as {
+        fileId: string;
+        fileType: string;
+      }[];
+      files.push(...extra);
+    } catch {}
+  }
+
+  for (const f of files) {
+    try {
+      if (f.fileType === "photo") await telegram.sendPhoto(chatId, f.fileId);
+      else if (f.fileType === "document")
+        await telegram.sendDocument(chatId, f.fileId);
+      else if (f.fileType === "video") await telegram.sendVideo(chatId, f.fileId);
+      else if (f.fileType === "animation" || f.fileType === "gif")
+        await telegram.sendAnimation(chatId, f.fileId);
+      else if (f.fileType === "text")
+        await telegram.sendMessage(chatId, `<code>${f.fileId}</code>`, {
+          parse_mode: "HTML",
+        });
     } catch {}
   }
 }

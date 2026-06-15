@@ -1026,14 +1026,21 @@ export async function showOrders(
       pricePaid: purchasesTable.pricePaid,
       refunded: purchasesTable.refunded,
       createdAt: purchasesTable.createdAt,
-      productId: purchasesTable.productId,
       size: productsTable.size,
+      fileType: productsTable.fileType,
+      content: productsTable.content,
+      fileId: productsTable.fileId,
+      mediaFiles: productsTable.mediaFiles,
       typeName: productTypesTable.name,
       typeEmoji: productTypesTable.emoji,
+      cityName: citiesTable.name,
+      districtName: districtsTable.name,
     })
     .from(purchasesTable)
     .leftJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
     .leftJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .leftJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .leftJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
     .where(eq(purchasesTable.userId, telegramId))
     .orderBy(desc(purchasesTable.createdAt))
     .limit(PAGE_SIZE)
@@ -1044,58 +1051,112 @@ export async function showOrders(
     .from(purchasesTable)
     .where(eq(purchasesTable.userId, telegramId));
   const total = totalRow?.count ?? 0;
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
 
-  let text = `📋 <b>My Orders</b>\n`;
-  if (total > 0) {
-    text += `${total} purchase${total === 1 ? "" : "s"} total · Page ${page + 1}/${totalPages}\n`;
-    text += `Tap a number to view item details &amp; photos.\n\n`;
-  }
-
-  if (purchases.length === 0) {
-    text += "No orders yet.";
-  } else {
-    purchases.forEach((p, i) => {
-      const n = page * PAGE_SIZE + i + 1;
-      const label =
-        p.typeName && p.size
-          ? `${p.typeEmoji ?? ""} ${p.typeName} ${p.size}`.trim()
-          : `Order ${p.queueId}`;
-      text +=
-        `<b>${n}.</b> ${label}\n` +
-        `   💶 ${formatEur(p.pricePaid)}` +
-        (p.refunded ? " · ↩ refunded" : "") +
-        ` · ${formatDate(p.createdAt)}\n`;
-    });
-  }
-
-  const rows: { text: string; callback_data: string }[][] = [];
-
-  // Numbered buttons to fetch the actual content of each item.
-  if (purchases.length > 0) {
-    const contentBtns = purchases.map((p, i) => ({
-      text: String(page * PAGE_SIZE + i + 1),
-      callback_data: `shop:order_content:${p.id}`,
-    }));
-    for (let i = 0; i < contentBtns.length; i += 5) {
-      rows.push(contentBtns.slice(i, i + 5));
-    }
-  }
-
+  // Build nav header — edit the tapped message so it stays at the top.
   const navRow: { text: string; callback_data: string }[] = [];
   if (page > 0)
     navRow.push({ text: "« Prev", callback_data: `shop:orders:${page - 1}` });
   if ((page + 1) * PAGE_SIZE < total)
     navRow.push({ text: "Next »", callback_data: `shop:orders:${page + 1}` });
-  if (navRow.length) rows.push(navRow);
-  rows.push([BACK_BTN("shop:profile")]);
 
-  const kb = inlineKeyboard(rows);
+  const headerRows: { text: string; callback_data: string }[][] = [];
+  if (navRow.length) headerRows.push(navRow);
+  headerRows.push([BACK_BTN("shop:profile")]);
+
+  const headerText =
+    purchases.length === 0
+      ? "📋 <b>My Orders</b>\n\nNo orders yet."
+      : `📋 <b>My Orders</b>\n${total} purchase${total === 1 ? "" : "s"} · Page ${page + 1}/${totalPages}`;
 
   if (ctx.callbackQuery) {
-    await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+    await ctx.editMessageText(headerText, {
+      parse_mode: "HTML",
+      ...inlineKeyboard(headerRows),
+    });
   } else {
-    await ctx.reply(text, { parse_mode: "HTML", ...kb });
+    await ctx.reply(headerText, {
+      parse_mode: "HTML",
+      ...inlineKeyboard(headerRows),
+    });
+  }
+
+  // Send a card for every purchase on this page with full details + media.
+  for (const p of purchases) {
+    const label =
+      p.typeName && p.size
+        ? `${p.typeEmoji ?? ""} ${p.typeName} ${p.size}`.trim()
+        : "Product";
+
+    const caption =
+      `<b>${label}</b>\n` +
+      (p.cityName && p.districtName
+        ? `📍 ${p.cityName} · ${p.districtName}\n`
+        : "") +
+      `💶 ${formatEur(p.pricePaid)}` +
+      (p.refunded ? " · ↩ refunded" : "") +
+      `\n📅 ${formatDate(p.createdAt)}\n` +
+      `🆔 <code>${p.queueId}</code>`;
+
+    const files: { fileId: string; fileType: string }[] = [];
+    if (p.fileId && p.fileType && p.fileType !== "text") {
+      files.push({ fileId: p.fileId, fileType: p.fileType });
+    }
+    if (p.mediaFiles) {
+      try {
+        const extras = JSON.parse(p.mediaFiles) as {
+          fileId: string;
+          fileType: string;
+        }[];
+        files.push(...extras);
+      } catch {}
+    }
+
+    if (files.length > 0) {
+      const [first, ...rest] = files;
+      try {
+        if (first.fileType === "photo")
+          await ctx.replyWithPhoto(first.fileId, {
+            caption,
+            parse_mode: "HTML",
+          });
+        else if (first.fileType === "document")
+          await ctx.replyWithDocument(first.fileId, {
+            caption,
+            parse_mode: "HTML",
+          });
+        else if (first.fileType === "video")
+          await ctx.replyWithVideo(first.fileId, {
+            caption,
+            parse_mode: "HTML",
+          });
+        else if (first.fileType === "animation" || first.fileType === "gif")
+          await (ctx as Context).replyWithAnimation(first.fileId, {
+            caption,
+            parse_mode: "HTML",
+          });
+        else await ctx.reply(caption, { parse_mode: "HTML" });
+      } catch {
+        await ctx.reply(caption, { parse_mode: "HTML" });
+      }
+      for (const f of rest) {
+        try {
+          if (f.fileType === "photo") await ctx.replyWithPhoto(f.fileId);
+          else if (f.fileType === "document")
+            await ctx.replyWithDocument(f.fileId);
+          else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
+          else if (f.fileType === "animation" || f.fileType === "gif")
+            await (ctx as Context).replyWithAnimation(f.fileId);
+        } catch {}
+      }
+    } else {
+      // Text product — inline content, or just the caption if no content.
+      let msg = caption;
+      if (p.fileType === "text" && p.content) {
+        msg += `\n\n<code>${p.content}</code>`;
+      }
+      await ctx.reply(msg, { parse_mode: "HTML" }).catch(() => {});
+    }
   }
 }
 

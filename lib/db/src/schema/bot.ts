@@ -50,6 +50,7 @@ export const adminsTable = pgTable("bot_admins", {
   id: serial("id").primaryKey(),
   telegramId: bigint("telegram_id", { mode: "number" }).notNull().unique(),
   username: text("username"),
+  notifyOnPurchase: boolean("notify_on_purchase").notNull().default(true),
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
 

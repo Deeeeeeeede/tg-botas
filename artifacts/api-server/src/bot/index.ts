@@ -143,6 +143,7 @@ import {
   showChangeWallet,
   doChangeWallet,
   resetWalletToDefault,
+  toggleAdminNotifications,
 } from "./handlers/admin-tools";
 import {
   showWorkersMenu,
@@ -1936,6 +1937,7 @@ export function createBot(token?: string): Telegraf {
           await ctx.answerCbQuery("✅ Home media removed.", { show_alert: true });
           return showToolsMenu(ctx);
         }
+        if (sub === "toggle_notify") return toggleAdminNotifications(ctx);
         return;
       }
 

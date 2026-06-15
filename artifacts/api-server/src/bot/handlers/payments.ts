@@ -12,6 +12,7 @@ import {
   districtsTable,
   paymentReceiptsTable,
   topupInvoicesTable,
+  adminsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { formatEur, generateQueueId, addMinutes, formatDate } from "../utils";
@@ -566,6 +567,63 @@ export type PurchaseDescriptor = {
   paynowSpec?: { cityId: number; districtId: number; typeId: number; size: string };
 };
 
+// Fire-and-forget: notifies every admin who has notifyOnPurchase=true after a
+// successful purchase, sending product info + the actual uploaded media.
+async function notifyAdminsOfPurchase(
+  telegram: any,
+  buyer: { telegramId: number; username: string | null; firstName: string | null },
+  productsById: Map<number, any>,
+  purchased: { productId: number; size: string; pricePaid: number }[],
+) {
+  const admins = await db
+    .select({ telegramId: adminsTable.telegramId })
+    .from(adminsTable)
+    .where(eq(adminsTable.notifyOnPurchase, true));
+  if (admins.length === 0) return;
+
+  const buyerLabel = buyer.username
+    ? `@${buyer.username}`
+    : buyer.firstName ?? `#${buyer.telegramId}`;
+
+  for (const p of purchased) {
+    const product = productsById.get(p.productId);
+    if (!product) continue;
+
+    const [details] = await db
+      .select({
+        typeName: productTypesTable.name,
+        typeEmoji: productTypesTable.emoji,
+        cityName: citiesTable.name,
+        districtName: districtsTable.name,
+      })
+      .from(productsTable)
+      .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+      .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+      .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+      .where(eq(productsTable.id, p.productId));
+
+    const header =
+      `🛒 <b>New Sale!</b>\n\n` +
+      (details
+        ? `${details.typeEmoji ?? ""} <b>${details.typeName} ${p.size}</b>\n` +
+          `📍 ${details.cityName} · ${details.districtName}\n`
+        : `📦 <b>${p.size}</b>\n`) +
+      `💶 ${formatEur(p.pricePaid)}\n` +
+      `👤 ${buyerLabel}`;
+
+    for (const admin of admins) {
+      try {
+        await telegram.sendMessage(admin.telegramId, header, {
+          parse_mode: "HTML",
+        });
+        await sendProductMediaTo(telegram, admin.telegramId, product);
+      } catch {
+        // admin blocked bot or invalid chat — skip silently
+      }
+    }
+  }
+}
+
 // Context-free purchase finalization. Delivers all messages/media through the
 // raw Telegram client so it works both for interactive taps and the background
 // auto-confirm ticker. When editMessageId is provided, the result is rendered by
@@ -782,6 +840,12 @@ export async function finalizePurchase(
   for (const product of productsToDeliver) {
     await sendProductMediaTo(telegram, chatId, product);
   }
+
+  // Notify opted-in admins (fire-and-forget — must not block or throw).
+  const productsById = new Map<number, any>(
+    productsToDeliver.map((p: any) => [p.id, p]),
+  );
+  notifyAdminsOfPurchase(telegram, user, productsById, purchased).catch(() => {});
 
   await telegram
     .sendMessage(chatId, "Thank you for your purchase! 🙏", {

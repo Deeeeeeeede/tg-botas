@@ -7,6 +7,7 @@ import {
   usersTable,
   basketsTable,
   backupTokensTable,
+  adminsTable,
 } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import {
@@ -20,17 +21,67 @@ import { clearExpiredReservations, getSetting, setSetting } from "../db";
 export async function showToolsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
   ctx.session.data = undefined;
+
+  const adminId = ctx.from!.id;
+  const adminRow = await db
+    .select({ notifyOnPurchase: adminsTable.notifyOnPurchase })
+    .from(adminsTable)
+    .where(eq(adminsTable.telegramId, adminId))
+    .then((r) => r[0]);
+  const notifyOn = adminRow?.notifyOnPurchase ?? true;
+
+  const notifyBtn = notifyOn
+    ? { text: "🔔 Sale Notifications: ON", callback_data: "tools:toggle_notify" }
+    : { text: "🔕 Sale Notifications: OFF", callback_data: "tools:toggle_notify" };
+
+  const kb = inlineKeyboard([
+    [{ text: "🖼 Set Bot Media", callback_data: "tools:set_media" }],
+    [{ text: "🚫 Remove Bot Media", callback_data: "tools:remove_media" }],
+    [{ text: "🗑 Clear Reservations", callback_data: "tools:clear_res" }],
+    [{ text: "💳 Payment Recovery", callback_data: "tools:payment_recovery" }],
+    [{ text: "↩ Product Refund", callback_data: "tools:refund" }],
+    [{ text: "🔑 Backup Tokens", callback_data: "tools:backup_tokens" }],
+    [{ text: "➕ Add Balance to User", callback_data: "tools:add_balance" }],
+    [{ text: "🪙 Change SOL Wallet", callback_data: "tools:change_wallet" }],
+    [notifyBtn],
+    [BACK_BTN("admin:main")],
+  ]);
+
   if (ctx.callbackQuery) {
     await ctx.editMessageText("🔧 <b>Tools & Settings</b>", {
       parse_mode: "HTML",
-      ...TOOLS_KB,
+      ...kb,
     });
   } else {
     await ctx.reply("🔧 <b>Tools & Settings</b>", {
       parse_mode: "HTML",
-      ...TOOLS_KB,
+      ...kb,
     });
   }
+}
+
+export async function toggleAdminNotifications(
+  ctx: Context & { session: BotSession },
+) {
+  const adminId = ctx.from!.id;
+  const adminRow = await db
+    .select({ notifyOnPurchase: adminsTable.notifyOnPurchase })
+    .from(adminsTable)
+    .where(eq(adminsTable.telegramId, adminId))
+    .then((r) => r[0]);
+  if (!adminRow) return;
+
+  const newValue = !adminRow.notifyOnPurchase;
+  await db
+    .update(adminsTable)
+    .set({ notifyOnPurchase: newValue })
+    .where(eq(adminsTable.telegramId, adminId));
+
+  await ctx.answerCbQuery(
+    newValue ? "🔔 Sale notifications ON" : "🔕 Sale notifications OFF",
+    { show_alert: true },
+  );
+  await showToolsMenu(ctx);
 }
 
 export async function clearAllReservations(ctx: Context & { session: BotSession }) {

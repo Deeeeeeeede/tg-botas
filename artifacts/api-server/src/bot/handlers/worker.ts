@@ -8,6 +8,7 @@ import {
   productTypesTable,
   citiesTable,
   districtsTable,
+  usersTable,
 } from "@workspace/db";
 import { eq, and, count, desc } from "drizzle-orm";
 import {
@@ -17,6 +18,22 @@ import {
 } from "../keyboards";
 import { getCities, getDistricts, getProductTypes } from "../db";
 import { formatEur, formatDate } from "../utils";
+
+// Resolve the workerTag exactly as the upload paths in index.ts do:
+// worker record username -> users table username -> telegram ID string.
+// Must stay in sync with the upload-time derivation or uploads become invisible.
+async function resolveWorkerTag(worker: {
+  username: string | null;
+  telegramId: number;
+}): Promise<string> {
+  if (worker.username) return worker.username;
+  const userRow = await db
+    .select({ username: usersTable.username })
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, worker.telegramId))
+    .then((r) => r[0]);
+  return userRow?.username ?? String(worker.telegramId);
+}
 
 export async function showWorkersMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
@@ -62,12 +79,13 @@ export async function showWorkerDetail(
     .then((r) => r[0]);
   if (!worker) { await ctx.editMessageText("Worker not found."); return; }
 
+  const workerTag = await resolveWorkerTag(worker);
   const [available] = await db
     .select({ count: count() })
     .from(productsTable)
     .where(
       and(
-        eq(productsTable.workerTag, worker.username ?? String(worker.telegramId)),
+        eq(productsTable.workerTag, workerTag),
         eq(productsTable.status, "available")
       )
     );
@@ -82,6 +100,7 @@ export async function showWorkerDetail(
     `Added: ${formatDate(worker.addedAt)}`;
 
   const kb = inlineKeyboard([
+    [{ text: "📦 View Uploads", callback_data: `workers:uploads:${workerId}:0` }],
     [
       worker.enabled
         ? { text: "❌ Disable", callback_data: `workers:disable:${workerId}` }
@@ -91,6 +110,85 @@ export async function showWorkerDetail(
     [BACK_BTN("workers:list")],
   ]);
   await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+}
+
+const UPLOADS_PAGE_SIZE = 10;
+
+const STATUS_ICON: Record<string, string> = {
+  available: "🟢",
+  sold: "💰",
+  reserved: "🟡",
+};
+
+export async function showWorkerUploads(
+  ctx: Context & { session: BotSession },
+  workerId: number,
+  page = 0
+) {
+  const worker = await db
+    .select()
+    .from(workersTable)
+    .where(eq(workersTable.id, workerId))
+    .then((r) => r[0]);
+  if (!worker) {
+    await ctx.editMessageText("Worker not found.");
+    return;
+  }
+  const tag = await resolveWorkerTag(worker);
+
+  const [total] = await db
+    .select({ count: count() })
+    .from(productsTable)
+    .where(eq(productsTable.workerTag, tag));
+  const totalCount = total?.count ?? 0;
+
+  const products = await db
+    .select()
+    .from(productsTable)
+    .where(eq(productsTable.workerTag, tag))
+    .orderBy(desc(productsTable.createdAt))
+    .limit(UPLOADS_PAGE_SIZE)
+    .offset(page * UPLOADS_PAGE_SIZE);
+
+  const label = worker.username ? `@${worker.username}` : String(worker.telegramId);
+  if (totalCount === 0) {
+    await ctx.editMessageText(`📦 <b>${label}</b> has no uploads.`, {
+      parse_mode: "HTML",
+      ...inlineKeyboard([[BACK_BTN(`workers:detail:${workerId}`)]]),
+    });
+    return;
+  }
+
+  const totalPages = Math.ceil(totalCount / UPLOADS_PAGE_SIZE);
+  let text = `📦 <b>Uploads by ${label}</b>\n`;
+  text += `Total: ${totalCount} · Page ${page + 1}/${totalPages}\n\n`;
+  for (const p of products) {
+    const icon = STATUS_ICON[p.status] ?? "•";
+    text +=
+      `${icon} <b>${p.size}</b> — ${formatEur(p.price)} · ${p.status}\n` +
+      `   ${formatDate(p.createdAt)}\n`;
+  }
+
+  const nav: { text: string; callback_data: string }[] = [];
+  if (page > 0)
+    nav.push({
+      text: "⬅ Prev",
+      callback_data: `workers:uploads:${workerId}:${page - 1}`,
+    });
+  if (page < totalPages - 1)
+    nav.push({
+      text: "Next ➡",
+      callback_data: `workers:uploads:${workerId}:${page + 1}`,
+    });
+
+  const rows: { text: string; callback_data: string }[][] = [];
+  if (nav.length > 0) rows.push(nav);
+  rows.push([BACK_BTN(`workers:detail:${workerId}`)]);
+
+  await ctx.editMessageText(text, {
+    parse_mode: "HTML",
+    ...inlineKeyboard(rows),
+  });
 }
 
 export async function toggleWorker(
@@ -258,7 +356,9 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
     .from(workersTable)
     .where(eq(workersTable.telegramId, userId))
     .then((r) => r[0]);
-  const tag = user?.username ?? String(userId);
+  const tag = await resolveWorkerTag(
+    user ?? { username: null, telegramId: userId },
+  );
   const products = await db
     .select()
     .from(productsTable)

@@ -148,6 +148,7 @@ import {
   showWorkersMenu,
   showWorkersList,
   showWorkerDetail,
+  showWorkerUploads,
   toggleWorker,
   removeWorker,
   showKladMenu,
@@ -1949,6 +1950,12 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "list") return showWorkersList(ctx);
         if (sub === "detail") return showWorkerDetail(ctx, parseInt(parts[1]!));
+        if (sub === "uploads")
+          return showWorkerUploads(
+            ctx,
+            parseInt(parts[1]!),
+            parseInt(parts[2] ?? "0"),
+          );
         if (sub === "enable")
           return toggleWorker(ctx, parseInt(parts[1]!), true);
         if (sub === "disable")

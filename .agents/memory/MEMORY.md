@@ -2,3 +2,4 @@
 - [Balance write safety](balance-write-safety.md) — never update usersTable.balance without a per-user where clause; credit relative + in a transaction.
 - [sold-status invariant](sold-status-invariant.md) — never mark bot_products status='sold' as a soft-delete; 'sold' must always imply a bot_purchases row, else stock silently vanishes.
 - [Owner/admin authz](owner-admin-authz.md) — owner admin = OWNER_ID env only (getOwnerId/isOwner); never hardcode a Telegram ID for auth (backdoor risk).
+- [Worker tag derivation](worker-tag-derivation.md) — products link to workers only via bot_products.workerTag; reads must derive the tag identically to upload (use resolveWorkerTag) or uploads vanish.

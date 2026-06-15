@@ -55,7 +55,7 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 - **Discounts Menu** — discount codes, product discounts (🔥), reseller discounts (👑), tier system (🏆)
 - **Communications** — broadcast to all users, welcome message templates, reviews
 - **Tools & Settings** — add balance, clear reservations, payment recovery, refunds, backup tokens
-- **Workers (/klad)** — manage trusted product uploaders
+- **Workers (/klad)** — manage trusted product uploaders; per-worker "View Uploads" lists what each worker uploaded (size, price, status, date), paginated
 
 ## Customer Tier Defaults
 

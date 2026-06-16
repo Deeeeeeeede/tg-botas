@@ -99,12 +99,21 @@ export async function showHome(ctx: Context & { session: BotSession }) {
       parse_mode: "HTML" as const,
       ...(kb as any),
     };
-    if (homeMediaType === "animation") {
-      await ctx.replyWithAnimation(homeMediaFileId, extra);
-    } else if (homeMediaType === "video") {
-      await ctx.replyWithVideo(homeMediaFileId, extra);
-    } else {
-      await ctx.replyWithPhoto(homeMediaFileId, extra);
+    try {
+      if (homeMediaType === "animation") {
+        await ctx.replyWithAnimation(homeMediaFileId, extra);
+      } else if (homeMediaType === "video") {
+        await ctx.replyWithVideo(homeMediaFileId, extra);
+      } else {
+        await ctx.replyWithPhoto(homeMediaFileId, extra);
+      }
+    } catch {
+      // The welcome media file_id can be invalid for this bot — Telegram
+      // file_ids are bot-specific, so media uploaded via a different bot token
+      // (e.g. the production bot vs a dev/backup bot) will be rejected with
+      // "wrong file identifier". Fall back to a plain text home screen so
+      // /start always works instead of crashing.
+      await ctx.reply(header, { parse_mode: "HTML", ...kb });
     }
   } else if (ctx.callbackQuery) {
     await ctx.editMessageText(header, { parse_mode: "HTML", ...kb });

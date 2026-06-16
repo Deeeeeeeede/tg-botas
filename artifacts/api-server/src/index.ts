@@ -211,7 +211,14 @@ async function startBotWithFailover(): Promise<void> {
   // making the bot flaky and causing uploads/actions to be lost. So in dev we
   // only poll when given a SEPARATE token via DEV_BOT_TOKEN; otherwise we stay
   // quiet and let the deployment own the bot.
-  const isDeployment = !!process.env["REPLIT_DEPLOYMENT"];
+  //
+  // Deployment is detected via TWO independent signals so the live bot is
+  // guaranteed to poll: Replit sets REPLIT_DEPLOYMENT=1 in deployments, AND the
+  // production run command sets NODE_ENV=production (the dev script sets
+  // NODE_ENV=development). Either one being present means "this is production".
+  const isDeployment =
+    process.env["REPLIT_DEPLOYMENT"] === "1" ||
+    process.env["NODE_ENV"] === "production";
 
   if (!isDeployment) {
     const devToken = process.env["DEV_BOT_TOKEN"];

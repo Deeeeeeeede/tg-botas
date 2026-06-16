@@ -1548,17 +1548,19 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "del") {
           const productId = parseInt(parts[1]!);
-          // Hard-delete, but only while the unit is still available. Sold units
-          // are kept so purchase history and refunds stay intact.
+          // Mark unavailable instead of deleting so the product record survives
+          // for history, refunds, and analytics. Only available units can be
+          // removed this way; sold units are already protected.
           await db
-            .delete(productsTable)
+            .update(productsTable)
+            .set({ status: "unavailable" as any })
             .where(
               and(
                 eq(productsTable.id, productId),
                 eq(productsTable.status, "available"),
               ),
             );
-          await ctx.answerCbQuery("Product deleted.");
+          await ctx.answerCbQuery("Product marked unavailable.");
           const page = parseInt(parts[5] ?? "0");
           return showProductList(
             ctx,
@@ -2209,19 +2211,19 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "my_uploads") return showKladMyUploads(ctx, ctx.from.id);
         if (sub === "del_upload") {
-          // Only the worker's own still-available uploads are shown here, so we
-          // physically remove the row. Marking it "sold" would make a deleted
-          // upload masquerade as a phantom sale (an item that "vanished" with no
-          // buyer), which is exactly the disappearing-stock bug we're fixing.
+          // Mark unavailable instead of deleting so the product record survives
+          // for history, refunds, and analytics. The worker still loses their
+          // available unit (can't be sold), but the row stays in the database.
           await db
-            .delete(productsTable)
+            .update(productsTable)
+            .set({ status: "unavailable" as any })
             .where(
               and(
                 eq(productsTable.id, parseInt(parts[1]!)),
                 eq(productsTable.status, "available"),
               ),
             );
-          await ctx.answerCbQuery("Upload deleted.");
+          await ctx.answerCbQuery("Upload marked unavailable.");
           return showKladMyUploads(ctx, ctx.from.id);
         }
         if (sub === "done") {

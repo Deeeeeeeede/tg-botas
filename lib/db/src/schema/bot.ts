@@ -76,8 +76,8 @@ export const productTypesTable = pgTable("bot_product_types", {
 
 export const productsTable = pgTable("bot_products", {
   id: serial("id").primaryKey(),
-  cityId: integer("city_id").notNull().references(() => citiesTable.id),
-  districtId: integer("district_id").notNull().references(() => districtsTable.id),
+  cityId: integer("city_id").references(() => citiesTable.id),
+  districtId: integer("district_id").references(() => districtsTable.id),
   typeId: integer("type_id").notNull().references(() => productTypesTable.id),
   size: text("size").notNull(),
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),

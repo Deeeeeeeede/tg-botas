@@ -507,14 +507,16 @@ export async function showCatalogType(
     ]),
     [
       {
-        text: "🗑 Delete ALL slots for this product",
+        text: "🗑 Remove ALL catalog slots",
         callback_data: `eprod:cat_delall:${typeId}`,
       },
     ],
     [BACK_BTN("eprod:catalog")],
   ]);
   await ctx.editMessageText(
-    "📋 <b>Slots</b> (tap to delete):",
+    `📋 <b>Catalog Slots</b>\n\n` +
+    `Tap to remove a slot definition. <b>Uploaded products are NOT affected.</b>\n\n` +
+    `To delete actual uploaded stock, use the <b>Manage Products</b> menu instead.`,
     { parse_mode: "HTML", ...kb },
   );
 }
@@ -525,7 +527,7 @@ export async function deleteCatalogSlot(
   typeId: number,
 ) {
   await db.delete(productSlotsTable).where(eq(productSlotsTable.id, slotId));
-  await ctx.answerCbQuery("Slot deleted.");
+  await ctx.answerCbQuery("Slot removed. Uploaded products remain.");
   await showCatalogType(ctx, typeId);
 }
 
@@ -537,6 +539,6 @@ export async function deleteCatalogType(
     .delete(productSlotsTable)
     .where(eq(productSlotsTable.typeId, typeId))
     .returning({ id: productSlotsTable.id });
-  await ctx.answerCbQuery(`Deleted ${res.length} slot(s).`);
+  await ctx.answerCbQuery(`Removed ${res.length} slot(s). Uploaded products remain.`);
   await showCatalog(ctx);
 }

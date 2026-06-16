@@ -297,10 +297,11 @@ export async function deleteAllProducts(
   districtId: number,
   typeId: number
 ) {
-  // Hard-delete every still-available unit in this city/district/type. Sold
-  // units are left untouched so purchase history and refunds stay intact.
+  // Mark every still-available unit as unavailable rather than deleting it.
+  // Sold units are left untouched so purchase history and refunds stay intact.
   const result = await db
-    .delete(productsTable)
+    .update(productsTable)
+    .set({ status: "unavailable" as any })
     .where(
       and(
         eq(productsTable.cityId, cityId),
@@ -309,8 +310,8 @@ export async function deleteAllProducts(
         eq(productsTable.status, "available")
       )
     )
-    .returning();
-  await ctx.answerCbQuery(`Deleted ${result.length} products.`);
+    .returning({ id: productsTable.id });
+  await ctx.answerCbQuery(`Marked ${result.length} products unavailable.`);
   await showManageProducts(ctx);
 }
 

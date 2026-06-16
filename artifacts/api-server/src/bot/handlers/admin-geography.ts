@@ -128,15 +128,19 @@ export async function confirmDeleteCity(
     return;
   }
 
-  // Delete dependents first (products + catalog slots), then districts, then the
-  // city itself. Slots and districts both have foreign keys to the city, so
-  // skipping the slot cleanup would crash the delete on a constraint violation.
-  await db.delete(productsTable).where(eq(productsTable.cityId, cityId));
+  // Orphan uploaded products so they survive city deletion. Slots are removed
+  // because they only define *where* a product is offered; actual products are
+  // preserved (they become unavailable once the city is gone since customers
+  // can't browse them without a city).
+  await db
+    .update(productsTable)
+    .set({ cityId: null, districtId: null, status: "unavailable" as any })
+    .where(eq(productsTable.cityId, cityId));
   await db.delete(productSlotsTable).where(eq(productSlotsTable.cityId, cityId));
   await db.delete(districtsTable).where(eq(districtsTable.cityId, cityId));
   await db.delete(citiesTable).where(eq(citiesTable.id, cityId));
 
-  await ctx.answerCbQuery(`✅ City "${city.name}" and all districts/products deleted.`, { show_alert: true });
+  await ctx.answerCbQuery(`✅ City "${city.name}" deleted. Uploaded products preserved (now orphaned).`, { show_alert: true });
   await showCitiesList(ctx);
 }
 
@@ -258,14 +262,17 @@ export async function confirmDeleteDistrict(
     return;
   }
 
-  // Remove products + catalog slots in this district before the district row,
-  // otherwise the slot foreign key would block the delete.
-  await db.delete(productsTable).where(eq(productsTable.districtId, districtId));
+  // Orphan uploaded products so they survive district deletion. Slots are
+  // removed because they only define *where* a product is offered.
+  await db
+    .update(productsTable)
+    .set({ districtId: null, status: "unavailable" as any })
+    .where(eq(productsTable.districtId, districtId));
   await db
     .delete(productSlotsTable)
     .where(eq(productSlotsTable.districtId, districtId));
   await db.delete(districtsTable).where(eq(districtsTable.id, districtId));
 
-  await ctx.answerCbQuery(`✅ District "${district.name}" and all products deleted.`, { show_alert: true });
+  await ctx.answerCbQuery(`✅ District "${district.name}" deleted. Uploaded products preserved (now orphaned).`, { show_alert: true });
   await showDistrictsList(ctx, cityId);
 }

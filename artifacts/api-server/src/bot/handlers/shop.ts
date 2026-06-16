@@ -1154,12 +1154,23 @@ export async function showOrders(
           else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
           else if (f.fileType === "animation" || f.fileType === "gif")
             await (ctx as Context).replyWithAnimation(f.fileId);
+          else if (f.fileType === "text")
+            await ctx.reply(`<code>${f.fileId}</code>`, {
+              parse_mode: "HTML",
+            });
         } catch {}
       }
+      // Send any stored text content (e.g. a caption typed on the photo, or
+      // text entered before/after the images in the upload session).
+      if (p.content) {
+        await ctx
+          .reply(`<code>${p.content}</code>`, { parse_mode: "HTML" })
+          .catch(() => {});
+      }
     } else {
-      // Text product — inline content, or just the caption if no content.
+      // Text-only product: inline content appended to the purchase summary.
       let msg = caption;
-      if (p.fileType === "text" && p.content) {
+      if (p.content) {
         msg += `\n\n<code>${p.content}</code>`;
       }
       await ctx.reply(msg, { parse_mode: "HTML" }).catch(() => {});
@@ -1236,10 +1247,8 @@ export async function showOrderContent(
     } catch {}
   }
 
-  if (row.fileType === "text" && row.content) {
-    await ctx.reply(`<code>${row.content}</code>`, { parse_mode: "HTML" });
-  }
-
+  // Send files first, then text content (address/description). Content is
+  // sent regardless of fileType so photo-with-caption products work too.
   for (const f of files) {
     try {
       if (f.fileType === "photo") await ctx.replyWithPhoto(f.fileId);
@@ -1250,6 +1259,12 @@ export async function showOrderContent(
       else if (f.fileType === "text")
         await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
     } catch {}
+  }
+
+  if (row.content) {
+    await ctx
+      .reply(`<code>${row.content}</code>`, { parse_mode: "HTML" })
+      .catch(() => {});
   }
 
   if (

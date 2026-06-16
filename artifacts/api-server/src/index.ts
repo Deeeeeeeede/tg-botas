@@ -222,27 +222,31 @@ async function startBotWithFailover(): Promise<void> {
 
   if (!isDeployment) {
     const devToken = process.env["DEV_BOT_TOKEN"];
-    if (!devToken) {
-      logger.warn(
-        "Skipping Telegram polling in the workspace to avoid a 409 conflict " +
-          "with the live deployment (only one instance may poll a token). " +
-          "The deployed bot keeps running 24/7. To test the bot from the " +
-          "workspace, set DEV_BOT_TOKEN to a separate BotFather token.",
-      );
+    if (devToken) {
+      // A dedicated dev token is configured — use it to avoid conflicting with
+      // any live deployment that may be polling BOT_TOKEN.
+      const bot = createBot(devToken);
+      try {
+        const me = await bot.telegram.getMe();
+        await activateBot(bot, devToken, {
+          username: me.username,
+          isBackup: false,
+          tokenIndex: 0,
+        });
+      } catch (err) {
+        logger.error({ err }, "DEV_BOT_TOKEN failed to start");
+      }
       return;
     }
-    const bot = createBot(devToken);
-    try {
-      const me = await bot.telegram.getMe();
-      await activateBot(bot, devToken, {
-        username: me.username,
-        isBackup: false,
-        tokenIndex: 0,
-      });
-    } catch (err) {
-      logger.error({ err }, "DEV_BOT_TOKEN failed to start");
-    }
-    return;
+    // No DEV_BOT_TOKEN — fall through to start with BOT_TOKEN. This is safe
+    // when there is no live deployment (e.g. the Reserved VM was deleted).
+    // If a deployment is later re-created it will fight for updates (409);
+    // set DEV_BOT_TOKEN to a separate token to avoid that.
+    logger.warn(
+      "DEV_BOT_TOKEN not set — starting with BOT_TOKEN in workspace. " +
+        "If a live deployment is also running, both will fight for updates " +
+        "(409 Conflict). Set DEV_BOT_TOKEN to a separate token to avoid this.",
+    );
   }
 
   const tokens = await getOrderedTokens();

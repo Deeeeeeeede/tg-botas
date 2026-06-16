@@ -70,7 +70,11 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 ## Architecture decisions
 
 - Bot runs in the same process as the Express API server (long polling, not webhook)
-- **Running 24/7 / one-poller rule**: Telegram allows only ONE long-polling instance per bot token. The deployed Reserved VM polls `BOT_TOKEN` 24/7 — the user does NOT need to keep Replit open. The startup logic (`startBotWithFailover` in `artifacts/api-server/src/index.ts`) detects deployment via `REPLIT_DEPLOYMENT`: in deployment it polls `BOT_TOKEN`; in the workspace it polls ONLY if `DEV_BOT_TOKEN` is set, otherwise it skips polling entirely. This prevents the workspace and the live VM from fighting over updates (Telegram 409 Conflict), which previously made the bot flaky and caused uploads/actions to be lost. After changing bot code, re-publish so the deployment runs the latest build.
+- **Running 24/7 / one-poller rule**: Telegram allows only ONE long-polling instance per bot token. The startup logic (`startBotWithFailover` in `artifacts/api-server/src/index.ts`) works as follows:
+  - **Deployment** (`REPLIT_DEPLOYMENT=1` or `NODE_ENV=production`): always polls `BOT_TOKEN`.
+  - **Workspace + `DEV_BOT_TOKEN` set**: polls the dev token only — keeps the live deployment conflict-free.
+  - **Workspace + no `DEV_BOT_TOKEN`**: falls back to polling `BOT_TOKEN` directly with a warning. Safe when no deployment exists, but if you later re-publish you must set `DEV_BOT_TOKEN` to a separate BotFather token to avoid 409 Conflicts.
+  - After changing bot code while a deployment is live, re-publish so the deployment runs the latest build.
 - Automatic token failover: on startup the bot tries the main `BOT_TOKEN` first, then saved backup tokens (Tools → Backup Tokens). A health check (`getMe` every 60s) detects a revoked/deleted token (401/404) and relaunches on the next available token. The active token is flagged `[ACTIVE]` in the backup tokens list. Note: a backup bot has a different @username, so customers must open the new bot link — but all data is shared via the same database.
 - Session state stored in memory (Telegraf built-in session)
 - Price calculation applies discounts in order: fire (sale) → crown (reseller) → trophy (tier rule) → tier global % → discount code

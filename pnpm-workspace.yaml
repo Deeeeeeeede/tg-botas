@@ -62,7 +62,7 @@ catalog:
   tailwind-merge: ^3.3.1
   tailwindcss: ^4.1.14
   tsx: ^4.21.0
-  vite: ^7.3.2
+  vite: ^7.3.5
   wouter: ^3.3.5
   zod: ^3.25.76
 
@@ -155,6 +155,28 @@ overrides:
   "@expo/ngrok-bin>@expo/ngrok-bin-sunos-x64": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-ia32": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-"
-  # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
+  # drizzle-kit uses esbuild internally on an older version that's vulnerable, these override it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
-  esbuild: "0.27.3"
+  # esbuild <0.28.1 has missing binary integrity verification (GHSA-g7r4-m6w7-qqqr) and arbitrary file read (esbuild dev server Windows)
+  esbuild: "0.28.1"
+  # path-to-regexp >=8.0.0 <8.4.0: DoS + ReDoS via express router (HIGH) - GHSA-rhx6-c78j-4q9w / GHSA-t3n8-xqr0-4hhv
+  path-to-regexp: ">=8.4.0"
+  # qs >=6.11.1 <=6.15.1: remotely triggerable DoS in qs.stringify (MODERATE) - GHSA-cqmj-92xf-r6r9
+  qs: ">=6.15.2"
+  # fast-uri <=3.1.1: path traversal + host confusion (HIGH) - GHSA-jf6h-6h7j-p4f8
+  fast-uri: ">=3.1.2"
+  # brace-expansion >=2.0.0 <2.0.3: zero-step sequence DoS (MODERATE)
+  brace-expansion: ">=2.0.3"
+  # yaml >=2.0.0 <2.8.3: stack overflow via deeply nested input (MODERATE)
+  yaml: ">=2.8.3"
+  # postcss <8.5.10: XSS via unescaped </style> (MODERATE)
+  postcss: ">=8.5.10"
+  # js-yaml <=4.1.1: quadratic-complexity DoS (MODERATE) - GHSA-h67p-54hq-rp68
+  js-yaml: ">=4.2.0"
+  # markdown-it <=14.1.1: quadratic complexity DoS in smartquotes (MODERATE)
+  markdown-it: ">=14.2.0"
+  # @babel/core <=7.29.0: arbitrary file read via sourceMappingURL (LOW)
+  "@babel/core": ">=7.29.6"
+  # lodash 4.x CVEs (code injection via _.template, prototype pollution) have no patched 4.x release.
+  # lodash 5.x breaks recharts@2 (peer dep requires ^4). These CVEs are accepted risk in the
+  # dev-only mockup-sandbox — recharts is not used in the production bot.

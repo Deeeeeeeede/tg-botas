@@ -1034,6 +1034,23 @@ export function createBot(token?: string): Telegraf {
       return;
     }
 
+    if (step === "klad:add_text") {
+      const { productId } = data as { productId: number };
+      await db
+        .update(productsTable)
+        .set({ content: text.trim() })
+        .where(eq(productsTable.id, productId));
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      await ctx.reply(
+        "✅ Text saved! It will be sent to the buyer alongside the photo.",
+        inlineKeyboard([
+          [{ text: "⬅ Back to upload", callback_data: `klad:view_upload:${productId}` }],
+        ]),
+      );
+      return;
+    }
+
     if (step === "klad:size_custom") {
       const { cityId, districtId, typeId, price } = data;
       const size = text.trim();
@@ -2259,6 +2276,18 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "del_do")
           return deleteKladUpload(ctx, parseInt(parts[1]!), ctx.from.id);
+        if (sub === "add_text") {
+          const productId = parseInt(parts[1]!);
+          ctx.session.step = "klad:add_text";
+          ctx.session.data = { productId };
+          await ctx.answerCbQuery();
+          return ctx.reply(
+            "📝 Type the location or address text for this product.\n\nIt will be sent to the buyer alongside the photo.",
+            inlineKeyboard([
+              [{ text: "✖ Cancel", callback_data: `klad:view_upload:${productId}` }],
+            ]),
+          );
+        }
         if (sub === "done") {
           const step = ctx.session.step as string | undefined;
           const sessionData = (ctx.session.data ?? {}) as Record<string, any>;

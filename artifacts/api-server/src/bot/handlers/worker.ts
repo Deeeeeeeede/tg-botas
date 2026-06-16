@@ -339,6 +339,12 @@ export async function showKladUploadDetail(
   if (row.status === "available") {
     controls.push([
       {
+        text: row.content ? "✏️ Edit text" : "📝 Add text",
+        callback_data: `klad:add_text:${productId}`,
+      },
+    ]);
+    controls.push([
+      {
         text: "🗑 Delete this upload",
         callback_data: `klad:del_confirm:${productId}`,
       },

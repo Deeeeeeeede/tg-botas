@@ -1,2 +1,9 @@
-- [pnpm audit CVE overrides](pnpm-audit-overrides.md) — security overrides must live in package.json `pnpm.overrides`, not pnpm-workspace.yaml, to be recorded in the lockfile and seen by pnpm audit
+- [Destructive-on-tap list UX](destructive-on-tap-lists.md) — review lists must never delete on a single tap; use preview → two-step confirm, guard the delete sink with ownership+state filters.
+- [Sold status invariant](sold-status-invariant.md) — deletes/removals must set `unavailable`, never `sold`; `sold` is reserved for real purchases.
+- [Worker tag derivation](worker-tag-derivation.md) — how a worker's tag is resolved (username → users table → telegramId) for upload ownership.
+- [One-poller rule](one-poller-rule.md) — only one long-poll per bot token; workspace vs deployment token handling to avoid 409 conflicts.
+- [Owner/admin authz](owner-admin-authz.md) — owner is auto-added to admins; admin/worker authorization checks for protected callbacks.
+- [Balance write safety](balance-write-safety.md) — balance credits/top-ups must be atomic and single-claim per on-chain signature.
+- [Drizzle upsert duplicate target](drizzle-upsert-duplicate-target.md) — onConflict target gotchas in Drizzle upserts.
+- [pnpm audit CVE overrides](pnpm-audit-overrides.md) — security overrides must live in package.json `pnpm.overrides`, not pnpm-workspace.yaml, to be recorded in the lockfile and seen by pnpm audit.
 - [Publishing "Design mode" gate](publishing-design-mode-gate.md) — a kind=design artifact blocks backend-only publishing ("nothing to publish"); delete the design artifact dir to fix.

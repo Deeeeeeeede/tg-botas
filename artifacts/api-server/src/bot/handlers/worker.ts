@@ -202,45 +202,34 @@ export async function showWorkerUploads(
   });
 }
 
-export async function sendWorkerUploadContent(
-  ctx: Context & { session: BotSession },
-  productId: number
-) {
-  const [row] = await db
-    .select({
-      size: productsTable.size,
-      price: productsTable.price,
-      status: productsTable.status,
-      content: productsTable.content,
-      fileId: productsTable.fileId,
-      fileType: productsTable.fileType,
-      mediaFiles: productsTable.mediaFiles,
-      createdAt: productsTable.createdAt,
-      cityName: citiesTable.name,
-      districtName: districtsTable.name,
-      typeName: productTypesTable.name,
-      typeEmoji: productTypesTable.emoji,
-    })
-    .from(productsTable)
-    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
-    .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
-    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
-    .where(eq(productsTable.id, productId));
+// Shared content fields selected for any upload preview.
+const UPLOAD_CONTENT_COLUMNS = {
+  size: productsTable.size,
+  price: productsTable.price,
+  status: productsTable.status,
+  content: productsTable.content,
+  fileId: productsTable.fileId,
+  fileType: productsTable.fileType,
+  mediaFiles: productsTable.mediaFiles,
+  createdAt: productsTable.createdAt,
+  workerTag: productsTable.workerTag,
+  cityName: citiesTable.name,
+  districtName: districtsTable.name,
+  typeName: productTypesTable.name,
+  typeEmoji: productTypesTable.emoji,
+};
 
-  if (!row) {
-    await ctx.answerCbQuery("❌ Product not found.");
-    return;
-  }
-  await ctx.answerCbQuery();
+type UploadContentRow = {
+  content: string | null;
+  fileId: string | null;
+  fileType: string;
+  mediaFiles: string | null;
+};
 
-  const icon = STATUS_ICON[row.status] ?? "•";
-  const header =
-    `📦 <b>${row.typeEmoji ?? ""} ${row.typeName} ${row.size}</b>\n` +
-    `${row.cityName} · ${row.districtName}\n` +
-    `${formatEur(row.price)} · ${icon} ${row.status} · ${formatDate(row.createdAt)}`;
-  await ctx.reply(header, { parse_mode: "HTML" });
-
-  // Collect every file attached to this upload (primary + extras).
+// Send every file (and any inline text) attached to an upload. Pure output —
+// it never mutates product state, so it's safe to reuse for both the admin
+// "View Uploads" review and the worker "My Uploads" preview.
+async function sendUploadFiles(ctx: Context, row: UploadContentRow) {
   const files: { fileId: string; fileType: string }[] = [];
   if (row.fileId && row.fileType !== "text") {
     files.push({ fileId: row.fileId, fileType: row.fileType });
@@ -267,7 +256,7 @@ export async function sendWorkerUploadContent(
     else if (f.fileType === "document") await ctx.replyWithDocument(f.fileId);
     else if (f.fileType === "video") await ctx.replyWithVideo(f.fileId);
     else if (f.fileType === "animation" || f.fileType === "gif")
-      await (ctx as Context).replyWithAnimation(f.fileId);
+      await ctx.replyWithAnimation(f.fileId);
     else if (f.fileType === "text")
       await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
   }
@@ -275,6 +264,127 @@ export async function sendWorkerUploadContent(
   if (files.length === 0 && !(row.fileType === "text" && row.content)) {
     await ctx.reply("⚠️ This upload has no stored content.");
   }
+}
+
+export async function sendWorkerUploadContent(
+  ctx: Context & { session: BotSession },
+  productId: number
+) {
+  const [row] = await db
+    .select(UPLOAD_CONTENT_COLUMNS)
+    .from(productsTable)
+    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .where(eq(productsTable.id, productId));
+
+  if (!row) {
+    await ctx.answerCbQuery("❌ Product not found.");
+    return;
+  }
+  await ctx.answerCbQuery();
+
+  const icon = STATUS_ICON[row.status] ?? "•";
+  const header =
+    `📦 <b>${row.typeEmoji ?? ""} ${row.typeName} ${row.size}</b>\n` +
+    `${row.cityName} · ${row.districtName}\n` +
+    `${formatEur(row.price)} · ${icon} ${row.status} · ${formatDate(row.createdAt)}`;
+  await ctx.reply(header, { parse_mode: "HTML" });
+
+  await sendUploadFiles(ctx, row);
+}
+
+// Worker-facing preview of one of their own uploads. Reviewing an upload must
+// NEVER delete it — tapping an item here only shows its content, and deletion
+// is offered as an explicit, confirmed action below.
+export async function showKladUploadDetail(
+  ctx: Context & { session: BotSession },
+  productId: number,
+  userId: number
+) {
+  const worker = await db
+    .select()
+    .from(workersTable)
+    .where(eq(workersTable.telegramId, userId))
+    .then((r) => r[0]);
+  const tag = await resolveWorkerTag(
+    worker ?? { username: null, telegramId: userId }
+  );
+
+  const [row] = await db
+    .select(UPLOAD_CONTENT_COLUMNS)
+    .from(productsTable)
+    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .where(eq(productsTable.id, productId));
+
+  // Only the worker who uploaded it may preview/manage it here.
+  if (!row || row.workerTag !== tag) {
+    await ctx.answerCbQuery("❌ Upload not found.");
+    return;
+  }
+  await ctx.answerCbQuery();
+
+  const icon = STATUS_ICON[row.status] ?? "•";
+  const header =
+    `📦 <b>${row.typeEmoji ?? ""} ${row.typeName} ${row.size}</b>\n` +
+    `${row.cityName} · ${row.districtName}\n` +
+    `${formatEur(row.price)} · ${icon} ${row.status} · ${formatDate(row.createdAt)}`;
+  await ctx.reply(header, { parse_mode: "HTML" });
+
+  await sendUploadFiles(ctx, row);
+
+  const controls: { text: string; callback_data: string }[][] = [];
+  if (row.status === "available") {
+    controls.push([
+      {
+        text: "🗑 Delete this upload",
+        callback_data: `klad:del_confirm:${productId}`,
+      },
+    ]);
+  }
+  controls.push([
+    { text: "⬅ Back to My Uploads", callback_data: "klad:my_uploads" },
+  ]);
+  await ctx.reply("Manage this upload:", { ...inlineKeyboard(controls) });
+}
+
+// Mark a worker's own available upload as unavailable. Guards on ownership so a
+// worker can only remove their own stock, and only when it's still available.
+export async function deleteKladUpload(
+  ctx: Context & { session: BotSession },
+  productId: number,
+  userId: number
+) {
+  const worker = await db
+    .select()
+    .from(workersTable)
+    .where(eq(workersTable.telegramId, userId))
+    .then((r) => r[0]);
+  const tag = await resolveWorkerTag(
+    worker ?? { username: null, telegramId: userId }
+  );
+
+  // Mark unavailable instead of deleting so the product record survives for
+  // history, refunds, and analytics. The worker loses the available unit, but
+  // the row stays in the database.
+  const result = await db
+    .update(productsTable)
+    .set({ status: "unavailable" as any })
+    .where(
+      and(
+        eq(productsTable.id, productId),
+        eq(productsTable.workerTag, tag),
+        eq(productsTable.status, "available")
+      )
+    )
+    .returning({ id: productsTable.id });
+
+  await ctx.answerCbQuery(
+    result.length > 0 ? "Upload removed." : "Nothing to remove."
+  );
+  await showKladMyUploads(ctx, userId);
 }
 
 export async function toggleWorker(
@@ -467,13 +577,13 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
   const kb = inlineKeyboard([
     ...products.map((p) => [
       {
-        text: `🗑 ${p.size} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
-        callback_data: `klad:del_upload:${p.id}`,
+        text: `📦 ${p.size} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
+        callback_data: `klad:view_upload:${p.id}`,
       },
     ]),
     [{ text: "✖ Exit", callback_data: "klad:exit" }],
   ]);
-  await ctx.editMessageText("📋 <b>My Uploads</b> (tap to delete):", {
+  await ctx.editMessageText("📋 <b>My Uploads</b> (tap to view):", {
     parse_mode: "HTML",
     ...kb,
   });

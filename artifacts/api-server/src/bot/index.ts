@@ -163,6 +163,8 @@ import {
   showKladTypes,
   showKladSizes,
   showKladMyUploads,
+  showKladUploadDetail,
+  deleteKladUpload,
 } from "./handlers/worker";
 import {
   showHome,
@@ -2210,22 +2212,35 @@ export function createBot(token?: string): Telegraf {
           );
         }
         if (sub === "my_uploads") return showKladMyUploads(ctx, ctx.from.id);
-        if (sub === "del_upload") {
-          // Mark unavailable instead of deleting so the product record survives
-          // for history, refunds, and analytics. The worker still loses their
-          // available unit (can't be sold), but the row stays in the database.
-          await db
-            .update(productsTable)
-            .set({ status: "unavailable" as any })
-            .where(
-              and(
-                eq(productsTable.id, parseInt(parts[1]!)),
-                eq(productsTable.status, "available"),
-              ),
-            );
-          await ctx.answerCbQuery("Upload marked unavailable.");
-          return showKladMyUploads(ctx, ctx.from.id);
+        if (sub === "view_upload")
+          return showKladUploadDetail(ctx, parseInt(parts[1]!), ctx.from.id);
+        if (sub === "del_confirm") {
+          // Two-step delete: tapping an upload only previews it; removal is an
+          // explicit, confirmed action so reviewing stock can never delete it.
+          const productId = parseInt(parts[1]!);
+          return ctx.editMessageText(
+            "⚠️ <b>Remove this upload?</b>\n\nIt will no longer be available for sale.",
+            {
+              parse_mode: "HTML",
+              ...inlineKeyboard([
+                [
+                  {
+                    text: "🗑 Yes, remove it",
+                    callback_data: `klad:del_do:${productId}`,
+                  },
+                ],
+                [
+                  {
+                    text: "✖ Cancel",
+                    callback_data: "klad:my_uploads",
+                  },
+                ],
+              ]),
+            },
+          );
         }
+        if (sub === "del_do")
+          return deleteKladUpload(ctx, parseInt(parts[1]!), ctx.from.id);
         if (sub === "done") {
           const step = ctx.session.step as string | undefined;
           const sessionData = (ctx.session.data ?? {}) as Record<string, any>;

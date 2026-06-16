@@ -35,6 +35,11 @@ import {
   ilike,
 } from "drizzle-orm";
 
+// How often to flush lastActiveAt to the DB for an active user.
+// Skipping redundant writes on every button press is the single biggest
+// latency win — each DB round-trip adds ~2–5 ms.
+const LAST_ACTIVE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
 export async function getOrCreateUser(
   telegramId: number,
   username?: string,
@@ -56,20 +61,26 @@ export async function getOrCreateUser(
     const changedProfile =
       (username && username !== user.username) ||
       (firstName && firstName !== user.firstName);
-    await db
-      .update(usersTable)
-      .set(
-        changedProfile
-          ? { username, firstName, lastActiveAt: new Date() }
-          : { lastActiveAt: new Date() },
-      )
-      .where(eq(usersTable.telegramId, telegramId));
-    if (changedProfile) {
-      user = {
-        ...user,
-        username: username ?? user.username,
-        firstName: firstName ?? user.firstName,
-      };
+    const lastActive = user.lastActiveAt
+      ? new Date(user.lastActiveAt).getTime()
+      : 0;
+    const activityStale = Date.now() - lastActive > LAST_ACTIVE_TTL_MS;
+    if (changedProfile || activityStale) {
+      await db
+        .update(usersTable)
+        .set(
+          changedProfile
+            ? { username, firstName, lastActiveAt: new Date() }
+            : { lastActiveAt: new Date() },
+        )
+        .where(eq(usersTable.telegramId, telegramId));
+      if (changedProfile) {
+        user = {
+          ...user,
+          username: username ?? user.username,
+          firstName: firstName ?? user.firstName,
+        };
+      }
     }
   }
   return user;

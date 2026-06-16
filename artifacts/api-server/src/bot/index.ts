@@ -241,7 +241,9 @@ export function createBot(token?: string): Telegraf {
 
   bot.use(async (ctx: any, next) => {
     if (!ctx.from) return next();
-    await getOrCreateUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    const user = await getOrCreateUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    ctx.state = ctx.state ?? {};
+    ctx.state.user = user;
     return next();
   });
 

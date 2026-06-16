@@ -48,7 +48,9 @@ export async function showHome(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
   ctx.session.data = undefined;
 
-  const user = await getUser(telegramId);
+  // Use the user already fetched by the global middleware (ctx.state.user) to
+  // avoid a redundant DB round-trip on every home screen load.
+  const user = (ctx as any).state?.user ?? await getUser(telegramId);
   if (!user) return;
 
   if (user.isBanned) {
@@ -56,18 +58,14 @@ export async function showHome(ctx: Context & { session: BotSession }) {
     return;
   }
 
-  const [welcomeText, homeMediaFileId, homeMediaType, reviewCount] = await Promise.all([
+  // Basket count joined into the same Promise.all — was a sequential await before.
+  const [welcomeText, homeMediaFileId, homeMediaType, reviewCount, basketCount] = await Promise.all([
     getWelcomeText(),
     getSetting("home_media_file_id"),
     getSetting("home_media_type"),
     db.select({ count: count() }).from(reviewsTable).then((r) => r[0]?.count ?? 0),
+    db.select({ count: count() }).from(basketsTable).where(eq(basketsTable.userId, telegramId)).then((r) => r[0]?.count ?? 0),
   ]);
-
-  const basketCount = await db
-    .select({ count: count() })
-    .from(basketsTable)
-    .where(eq(basketsTable.userId, telegramId))
-    .then((r) => r[0]?.count ?? 0);
 
   const tierEmoji = TIER_EMOJI[user.tierName] ?? "🏅";
   const name = ctx.from!.first_name ?? "Customer";

@@ -14,6 +14,19 @@ import { formatEur } from "../utils";
 
 type SlotSize = { size: string; price: number };
 
+export function parseSlotSizes(encoded: string): SlotSize[] {
+  const sizes: SlotSize[] = [];
+  for (const pair of encoded.split("|")) {
+    const [size, priceStr] = pair.split("@");
+    if (size && priceStr) sizes.push({ size, price: parseFloat(priceStr) });
+  }
+  return sizes;
+}
+
+export function encodeSlotSizes(sizes: SlotSize[]): string {
+  return sizes.map((s) => `${s.size}@${s.price}`).join("|");
+}
+
 function getEprod(ctx: Context & { session: BotSession }) {
   const data = (ctx.session.data ?? {}) as Record<string, any>;
   return {
@@ -43,6 +56,56 @@ function setEprod(
       ? { eprodDistrictIds: patch.districtIds }
       : {}),
   };
+}
+
+// When the admin picks an existing product type for an empty product, check if
+// that product already has sizes/prices stored anywhere in the catalog. If so,
+// offer to reuse them instead of retyping everything.
+export async function showExistingOrNewSizes(
+  ctx: Context & { session: BotSession },
+  typeId: number,
+) {
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
+  const rows = await db
+    .select({ size: productSlotsTable.size, price: productSlotsTable.price })
+    .from(productSlotsTable)
+    .where(eq(productSlotsTable.typeId, typeId))
+    .orderBy(asc(productSlotsTable.size))
+    .limit(40);
+
+  const seen = new Map<string, number>();
+  for (const r of rows) {
+    if (!seen.has(r.size)) seen.set(r.size, Number(r.price));
+  }
+  const existing = [...seen.entries()].map(([size, price]) => ({ size, price }));
+
+  if (existing.length > 0) {
+    const sizeText = existing
+      .map((s) => `  ${s.size} — ${formatEur(s.price)}`)
+      .join("\n");
+    const kb = inlineKeyboard([
+      [{
+        text: "✅ Reuse these sizes",
+        callback_data: `eprod:reuse_sizes:${typeId}:${encodeSlotSizes(existing)}`,
+      }],
+      [{
+        text: "✏️ Enter new sizes",
+        callback_data: `eprod:type_new_sizes:${typeId}`,
+      }],
+      [BACK_BTN("prod:empty")],
+    ]);
+    await ctx.editMessageText(
+      `📐 <b>Existing sizes for this product</b>\n\n${sizeText}\n\n` +
+      `Reuse these sizes or enter new ones?`,
+      { parse_mode: "HTML", ...kb },
+    );
+    return;
+  }
+
+  // No existing sizes for this type — go straight to manual entry.
+  ctx.session.data = { eprodTypeId: typeId };
+  await promptEmptyProductSizes(ctx, true);
 }
 
 // Step 1 — pick (or create) the product, e.g. ❄️ Snaiges.
@@ -291,6 +354,17 @@ export async function showEmptyProductConfirm(
   );
 }
 
+// "Add to more cities" after creating slots for the same product.
+export async function addMoreCities(
+  ctx: Context & { session: BotSession },
+  typeId: number,
+  encodedSizes: string,
+) {
+  const sizes = parseSlotSizes(encodedSizes);
+  ctx.session.data = { eprodTypeId: typeId, eprodSizes: sizes };
+  await showEmptyProductCities(ctx);
+}
+
 export async function createEmptyProductSlots(
   ctx: Context & { session: BotSession },
 ) {
@@ -337,16 +411,15 @@ export async function createEmptyProductSlots(
 
   ctx.session.step = undefined;
   ctx.session.data = undefined;
+  const kb = inlineKeyboard([
+    [{ text: "🆕 Add to more cities", callback_data: `eprod:add_more:${typeId}:${encodeSlotSizes(sizes)}` }],
+    [{ text: "🆕 Add Another product", callback_data: "prod:empty" }],
+    [BACK_BTN("admin:products")],
+  ]);
   await ctx.editMessageText(
     `✅ Created/updated <b>${created}</b> catalog slot(s).\n\n` +
       `Workers can now upload stock for these via /klad.`,
-    {
-      parse_mode: "HTML",
-      ...inlineKeyboard([
-        [{ text: "🆕 Add Another", callback_data: "prod:empty" }],
-        [BACK_BTN("admin:products")],
-      ]),
-    },
+    { parse_mode: "HTML", ...kb },
   );
 }
 

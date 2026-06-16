@@ -80,14 +80,18 @@ import {
 } from "./handlers/admin-products";
 import {
   showEmptyProductStart,
+  showExistingOrNewSizes,
   promptEmptyProductSizes,
   parseSizesInput,
+  parseSlotSizes,
+  encodeSlotSizes,
   showEmptyProductCities,
   toggleEmptyProductCity,
   showEmptyProductDistricts,
   toggleEmptyProductDistrict,
   selectAllEmptyProductDistricts,
   showEmptyProductConfirm,
+  addMoreCities,
   createEmptyProductSlots,
   showCatalog,
   showCatalogType,
@@ -1438,6 +1442,16 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "type") {
           const typeId = parseInt(parts[1]!);
+          return showExistingOrNewSizes(ctx, typeId);
+        }
+        if (sub === "reuse_sizes") {
+          const typeId = parseInt(parts[1]!);
+          const sizes = parseSlotSizes(parts[2] ?? "");
+          ctx.session.data = { eprodTypeId: typeId, eprodSizes: sizes };
+          return showEmptyProductCities(ctx);
+        }
+        if (sub === "type_new_sizes") {
+          const typeId = parseInt(parts[1]!);
           ctx.session.data = { eprodTypeId: typeId };
           return promptEmptyProductSizes(ctx, true);
         }
@@ -1451,6 +1465,10 @@ export function createBot(token?: string): Telegraf {
         if (sub === "dists_done") return showEmptyProductConfirm(ctx);
         if (sub === "dists_back") return showEmptyProductDistricts(ctx);
         if (sub === "confirm") return createEmptyProductSlots(ctx);
+        if (sub === "add_more") {
+          const typeId = parseInt(parts[1]!);
+          return addMoreCities(ctx, typeId, parts[2] ?? "");
+        }
         return;
       }
 

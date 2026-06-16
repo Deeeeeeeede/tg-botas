@@ -238,15 +238,23 @@ async function startBotWithFailover(): Promise<void> {
       }
       return;
     }
-    // No DEV_BOT_TOKEN — fall through to start with BOT_TOKEN. This is safe
-    // when there is no live deployment (e.g. the Reserved VM was deleted).
-    // If a deployment is later re-created it will fight for updates (409);
-    // set DEV_BOT_TOKEN to a separate token to avoid that.
+    // No DEV_BOT_TOKEN in the workspace: do NOT fall back to BOT_TOKEN.
+    //
+    // Polling BOT_TOKEN from here is exactly what lets the dev process "steal"
+    // the live bot's updates: when both the deployment and this process poll the
+    // same token, Telegram hands some updates to this process, so workers'
+    // uploads get handled here and written to the DEV database instead of
+    // production — and the products then appear to "disappear" from the live
+    // bot. To make that impossible, the workspace NEVER polls BOT_TOKEN. It only
+    // runs a bot when a separate DEV_BOT_TOKEN is provided. The live deployment
+    // (REPLIT_DEPLOYMENT/NODE_ENV=production) is the sole owner of BOT_TOKEN.
     logger.warn(
-      "DEV_BOT_TOKEN not set — starting with BOT_TOKEN in workspace. " +
-        "If a live deployment is also running, both will fight for updates " +
-        "(409 Conflict). Set DEV_BOT_TOKEN to a separate token to avoid this.",
+      "DEV_BOT_TOKEN not set — workspace bot will NOT poll Telegram. " +
+        "Refusing to poll BOT_TOKEN so the dev process can never intercept the " +
+        "live bot's updates. Set DEV_BOT_TOKEN to a separate BotFather token to " +
+        "test the bot in the workspace.",
     );
+    return;
   }
 
   const tokens = await getOrderedTokens();

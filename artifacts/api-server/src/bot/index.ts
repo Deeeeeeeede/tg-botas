@@ -26,6 +26,7 @@ import { BotSession } from "./session";
 import {
   getOrCreateUser,
   isAdmin,
+  isOwner,
   isWorker,
   releaseBasket,
   updateUserTier,
@@ -38,6 +39,7 @@ import {
   getRecentlyActiveUsers,
 } from "./db";
 import { showAdminMenu, showAnalytics, refreshAdminLiveStatsNow, setAdminTelegram } from "./handlers/admin";
+import { restorePanevezys } from "./handlers/restore";
 import {
   showAdminManagers,
   addAdmin,
@@ -269,6 +271,15 @@ export function createBot(token?: string): Telegraf {
     ctx.session.step = undefined;
     ctx.session.data = undefined;
     await showAdminMenu(ctx);
+  });
+
+  // One-time owner-only recovery for the Panevezys stock that landed in the
+  // dev database. Safe to run more than once (skips items already present).
+  bot.command("restore_panevezys", async (ctx: any) => {
+    if (!isOwner(ctx.from.id)) {
+      return ctx.reply("❌ You are not authorized to use this command.");
+    }
+    await restorePanevezys(ctx);
   });
 
   bot.command("klad", async (ctx: any) => {

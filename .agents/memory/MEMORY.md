@@ -1,4 +1,4 @@
-- [Telegram file_ids + dev/prod DB split](telegram-fileid-and-db-split.md) — file_ids only work for the bot that made them (resend must fall back to text); workspace & deployment use separate DBs, prod is read-only to the agent.
+- [Telegram file_ids + dev/prod DB split](telegram-fileid-and-db-split.md) — file_ids only valid for the bot that made them (resend → text fallback); dev & prod are separate DBs, prod read-only.
 - [Destructive-on-tap list UX](destructive-on-tap-lists.md) — review lists must never delete on a single tap; use preview → two-step confirm, guard the delete sink with ownership+state filters.
 - [Sold status invariant](sold-status-invariant.md) — deletes/removals must set `unavailable`, never `sold`; `sold` is reserved for real purchases.
 - [Worker tag derivation](worker-tag-derivation.md) — how a worker's tag is resolved (username → users table → telegramId) for upload ownership.

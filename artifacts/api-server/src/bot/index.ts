@@ -1035,7 +1035,7 @@ export function createBot(token?: string): Telegraf {
     }
 
     if (step === "klad:add_text") {
-      const { productId } = data as { productId: number };
+      const { productId, backTo } = data as { productId: number; backTo?: string };
       await db
         .update(productsTable)
         .set({ content: text.trim() })
@@ -1045,7 +1045,7 @@ export function createBot(token?: string): Telegraf {
       await ctx.reply(
         "✅ Text saved! It will be sent to the buyer alongside the photo.",
         inlineKeyboard([
-          [{ text: "⬅ Back to upload", callback_data: `klad:view_upload:${productId}` }],
+          [{ text: "⬅ Back to upload", callback_data: backTo ?? `klad:view_upload:${productId}` }],
         ]),
       );
       return;
@@ -2021,6 +2021,18 @@ export function createBot(token?: string): Telegraf {
           );
         if (sub === "upload")
           return sendWorkerUploadContent(ctx, parseInt(parts[1]!));
+        if (sub === "add_text") {
+          const productId = parseInt(parts[1]!);
+          ctx.session.step = "klad:add_text";
+          ctx.session.data = { productId, backTo: `workers:upload:${productId}` };
+          await ctx.answerCbQuery();
+          return ctx.reply(
+            "📝 Type the location or address text for this product.\n\nIt will be sent to the buyer alongside the photo.",
+            inlineKeyboard([
+              [{ text: "✖ Cancel", callback_data: `workers:upload:${productId}` }],
+            ]),
+          );
+        }
         if (sub === "enable")
           return toggleWorker(ctx, parseInt(parts[1]!), true);
         if (sub === "disable")
@@ -2279,7 +2291,7 @@ export function createBot(token?: string): Telegraf {
         if (sub === "add_text") {
           const productId = parseInt(parts[1]!);
           ctx.session.step = "klad:add_text";
-          ctx.session.data = { productId };
+          ctx.session.data = { productId, backTo: `klad:view_upload:${productId}` };
           await ctx.answerCbQuery();
           return ctx.reply(
             "📝 Type the location or address text for this product.\n\nIt will be sent to the buyer alongside the photo.",

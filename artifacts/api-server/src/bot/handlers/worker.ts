@@ -292,6 +292,20 @@ export async function sendWorkerUploadContent(
   await ctx.reply(header, { parse_mode: "HTML" });
 
   await sendUploadFiles(ctx, row);
+
+  if (row.status === "available") {
+    await ctx.reply(
+      "Manage this upload:",
+      inlineKeyboard([
+        [
+          {
+            text: row.content ? "✏️ Edit text" : "📝 Add text",
+            callback_data: `workers:add_text:${productId}`,
+          },
+        ],
+      ]),
+    );
+  }
 }
 
 // Worker-facing preview of one of their own uploads. Reviewing an upload must

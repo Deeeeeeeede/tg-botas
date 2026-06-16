@@ -1,1 +1,2 @@
 - [pnpm audit CVE overrides](pnpm-audit-overrides.md) — security overrides must live in package.json `pnpm.overrides`, not pnpm-workspace.yaml, to be recorded in the lockfile and seen by pnpm audit
+- [Publishing "Design mode" gate](publishing-design-mode-gate.md) — a kind=design artifact blocks backend-only publishing ("nothing to publish"); delete the design artifact dir to fix.

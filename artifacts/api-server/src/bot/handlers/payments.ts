@@ -433,7 +433,9 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     `Send exactly: <code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${(await getSolWallet())}</code>\n` +
     `────────────────────────\n` +
-    `⚠️ Please send <b>this exact amount</b> so we can match your payment to this order.`;
+    `⚠️ <b>SEND THE EXACT AMOUNT</b> ⚠️\n` +
+    `<b>‼️ SIŲSKITE TIKSLIĄ SUMĄ ‼️</b>\n` +
+    `We can only match your payment if the amount is exactly <code>${solAmount}</code> SOL.`;
 
   const text = baseText + "\n\n" + countdownLine(expiresAt.getTime());
 

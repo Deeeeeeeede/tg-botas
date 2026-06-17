@@ -126,7 +126,9 @@ async function buildInvoiceText(eurAmount: number, solAmount: number): Promise<s
     `Send exactly:\n<code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${wallet}</code>\n` +
     `────────────────────────\n` +
-    `⚠️ Please send <b>this exact amount</b> so we can match your payment.\n` +
+    `⚠️ <b>SEND THE EXACT AMOUNT</b> ⚠️\n` +
+    `<b>‼️ SIŲSKITE TIKSLIĄ SUMĄ ‼️</b>\n` +
+    `We can only match your payment if the amount is exactly <code>${solAmount}</code> SOL.\n` +
     `✅ Press <b>Check Payment</b> after sending.`
   );
 }

@@ -12,9 +12,10 @@ import {
   districtsTable,
   paymentReceiptsTable,
   topupInvoicesTable,
+  invoiceIntentsTable,
   adminsTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc, inArray, lt } from "drizzle-orm";
 import { formatEur, generateQueueId, addMinutes, formatDate } from "../utils";
 import { getUser, getUserBasket, releaseBasket, updateUserTier } from "../db";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
@@ -87,6 +88,403 @@ export function registerPendingInvoice(userId: number, invoice: LiveInvoice) {
 
 export function cancelPendingInvoice(userId: number) {
   pendingInvoices.delete(userId);
+}
+
+// ── Durable purchase-invoice intents + payment reconciliation ───────────────
+// Purchase invoices used to live only in `pendingInvoices` (memory). A restart
+// (republish / VM restart / bot failover) or a payment arriving after the 15-min
+// window meant the buyer's on-chain payment had nothing to match — money in,
+// no product. We now persist every purchase invoice to bot_invoice_intents, and
+// a background sweep reconciles any wallet payment that wasn't consumed by the
+// live flow, crediting the buyer's balance (idempotent via the signature claim).
+
+const INTENT_LOOKBACK_MS = 48 * 60 * 60 * 1000; // how far back a payment can match an intent
+
+// Record a purchase invoice so a late/orphaned payment can be matched later.
+// Supersedes any still-open intent for the same user (mirrors the topup flow).
+export async function recordPurchaseIntent(
+  userId: number,
+  solAmount: number,
+  eurAmount: number,
+  expiresAt: number,
+): Promise<void> {
+  await db
+    .update(invoiceIntentsTable)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(invoiceIntentsTable.userId, userId),
+        eq(invoiceIntentsTable.status, "open"),
+      ),
+    )
+    .catch(() => {});
+  await db
+    .insert(invoiceIntentsTable)
+    .values({
+      userId,
+      solAmount: solAmount.toFixed(9),
+      eurAmount: eurAmount.toFixed(2),
+      status: "open",
+      expiresAt: new Date(expiresAt),
+    })
+    .catch(() => {});
+}
+
+// Mark a user's open purchase intent as fulfilled once their purchase completes
+// (called from both the tap and auto-confirm finalize paths). No-op for balance
+// purchases (which never create an intent).
+export async function markPurchaseIntentFulfilled(
+  userId: number,
+  signature?: string,
+): Promise<void> {
+  await db
+    .update(invoiceIntentsTable)
+    .set({ status: "fulfilled", txSignature: signature ?? null })
+    .where(
+      and(
+        eq(invoiceIntentsTable.userId, userId),
+        eq(invoiceIntentsTable.status, "open"),
+      ),
+    )
+    .catch(() => {});
+}
+
+// Mark a user's open purchase intent expired/canceled (invoice timed out or was
+// canceled by an admin). Reconciliation still considers expired intents so a
+// payment that lands just after expiry is recovered to balance.
+export async function markPurchaseIntentExpired(userId: number): Promise<void> {
+  await db
+    .update(invoiceIntentsTable)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(invoiceIntentsTable.userId, userId),
+        eq(invoiceIntentsTable.status, "open"),
+      ),
+    )
+    .catch(() => {});
+}
+
+export async function markPurchaseIntentCanceled(userId: number): Promise<void> {
+  await db
+    .update(invoiceIntentsTable)
+    .set({ status: "canceled" })
+    .where(
+      and(
+        eq(invoiceIntentsTable.userId, userId),
+        eq(invoiceIntentsTable.status, "open"),
+      ),
+    )
+    .catch(() => {});
+}
+
+// True if some live in-memory invoice is currently watching this SOL amount, so
+// the reconciliation sweep leaves it to the live flow (which delivers product
+// rather than crediting balance) and never double-handles it.
+function isAmountLive(amount: number): boolean {
+  for (const inv of pendingInvoices.values()) {
+    if (typeof inv.solAmount === "number" && Math.abs(inv.solAmount - amount) <= MATCH_TOL) {
+      return true;
+    }
+  }
+  return false;
+}
+
+type InboundPayment = {
+  signature: string;
+  receivedSol: number;
+  senderWallet: string | null;
+  blockTimeMs: number;
+};
+
+// Fetch recent INBOUND payments to the shop wallet (post-balance increased).
+// Used by the reconciliation sweep and the admin "Unmatched Payments" tool.
+export async function fetchInboundPayments(
+  limit = 40,
+): Promise<InboundPayment[]> {
+  const wallet = await getSolWallet();
+  const sigCtrl = new AbortController();
+  const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
+  const sigRes = await fetch(SOL_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getSignaturesForAddress",
+      params: [wallet, { limit }],
+    }),
+    signal: sigCtrl.signal,
+  }).finally(() => clearTimeout(sigTimer));
+  const sigData = (await sigRes.json()) as any;
+  const signatures: any[] = sigData?.result ?? [];
+
+  const out: InboundPayment[] = [];
+  for (const sig of signatures) {
+    if (sig.err) continue;
+    const txCtrl = new AbortController();
+    const txTimer = setTimeout(() => txCtrl.abort(), 12000);
+    const txRes = await fetch(SOL_RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTransaction",
+        params: [
+          sig.signature,
+          { encoding: "json", maxSupportedTransactionVersion: 0 },
+        ],
+      }),
+      signal: txCtrl.signal,
+    }).finally(() => clearTimeout(txTimer));
+    const txData = (await txRes.json()) as any;
+    const tx = txData?.result;
+    if (!tx) continue;
+    const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
+    const walletIndex = accountKeys.indexOf(wallet);
+    if (walletIndex === -1) continue;
+    const pre = tx.meta?.preBalances?.[walletIndex] ?? 0;
+    const post = tx.meta?.postBalances?.[walletIndex] ?? 0;
+    const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
+    if (receivedSol <= 0) continue;
+
+    const pres: number[] = tx.meta?.preBalances ?? [];
+    const posts: number[] = tx.meta?.postBalances ?? [];
+    let senderWallet: string | null = accountKeys[0] ?? null;
+    let maxDecrease = 0;
+    for (let i = 0; i < accountKeys.length; i++) {
+      if (i === walletIndex) continue;
+      const decrease = (pres[i] ?? 0) - (posts[i] ?? 0);
+      if (decrease > maxDecrease) {
+        maxDecrease = decrease;
+        senderWallet = accountKeys[i] ?? senderWallet;
+      }
+    }
+    out.push({
+      signature: sig.signature,
+      receivedSol,
+      senderWallet,
+      blockTimeMs: (sig.blockTime ?? 0) * 1000,
+    });
+  }
+  return out;
+}
+
+// Returns the set of tx signatures already consumed (so we never re-handle a
+// payment that the live flow or a prior sweep already credited/delivered).
+async function getClaimedSignatures(sigs: string[]): Promise<Set<string>> {
+  if (sigs.length === 0) return new Set();
+  const rows = await db
+    .select({ s: paymentReceiptsTable.txSignature })
+    .from(paymentReceiptsTable)
+    .where(inArray(paymentReceiptsTable.txSignature, sigs));
+  return new Set(rows.map((r) => r.s));
+}
+
+// Credit a recovered/late payment to a user's balance, atomically claiming the
+// signature so it can never be credited twice (same UNIQUE guard as topups).
+// Returns the new balance, or null if the signature was already consumed.
+export async function creditOrphanToBalance(
+  telegram: any,
+  userId: number,
+  signature: string,
+  receivedSol: number,
+  kind: "purchase" | "topup",
+  intentId?: number,
+): Promise<number | null> {
+  const solPrice = await getSolPrice();
+  const creditedEur = solPrice > 0 ? receivedSol * solPrice : 0;
+  if (creditedEur <= 0) return null;
+
+  let newBalance: number | null = null;
+  try {
+    newBalance = await db.transaction(async (tx) => {
+      const claimRows = await tx
+        .insert(paymentReceiptsTable)
+        .values({
+          txSignature: signature,
+          userId,
+          kind,
+          receivedSol: receivedSol.toFixed(9),
+        })
+        .onConflictDoNothing({ target: paymentReceiptsTable.txSignature })
+        .returning({ id: paymentReceiptsTable.id });
+      if (claimRows.length === 0) return null; // already consumed elsewhere
+      const [u] = await tx
+        .update(usersTable)
+        .set({ balance: sql`${usersTable.balance} + ${creditedEur}` })
+        .where(eq(usersTable.telegramId, userId))
+        .returning({ balance: usersTable.balance });
+      if (intentId !== undefined) {
+        await tx
+          .update(invoiceIntentsTable)
+          .set({ status: "fulfilled", txSignature: signature })
+          .where(eq(invoiceIntentsTable.id, intentId));
+      }
+      return Number(u?.balance ?? 0);
+    });
+  } catch {
+    return null;
+  }
+  if (newBalance === null) return null;
+
+  const { refreshAdminLiveStatsNow } = await import("./admin");
+  refreshAdminLiveStatsNow();
+
+  await telegram
+    .sendMessage(
+      userId,
+      `✅ <b>Payment received</b>\n\n` +
+        `We received your payment of <b>${receivedSol.toFixed(6)} SOL</b> (${formatEur(creditedEur)}).\n` +
+        `It arrived after your order window closed, so we added <b>${formatEur(creditedEur)}</b> to your balance.\n` +
+        `💰 New balance: <b>${formatEur(newBalance)}</b>\n\n` +
+        `You can use your balance to buy instantly.\n` +
+        `<i>Gavome jūsų mokėjimą — suma įskaityta į balansą.</i>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+        },
+      },
+    )
+    .catch(() => {});
+  return newBalance;
+}
+
+let reconcileRunning = false;
+// Background sweep: find wallet payments that the live flow never consumed and
+// match each back to its buyer's persisted invoice (purchase intent or topup),
+// crediting the balance. This is what makes payments survive restarts and late
+// arrivals. Conservative: only auto-credits when EXACTLY ONE recent unfulfilled
+// invoice matches the amount; ambiguous cases are left for the admin tool.
+export async function reconcilePayments(telegram: any): Promise<void> {
+  if (reconcileRunning) return;
+  reconcileRunning = true;
+  try {
+    const payments = await fetchInboundPayments(40);
+    if (payments.length === 0) return;
+    const claimed = await getClaimedSignatures(payments.map((p) => p.signature));
+    const now = Date.now();
+
+    for (const p of payments) {
+      if (claimed.has(p.signature)) continue;
+      if (isAmountLive(p.receivedSol)) continue; // live flow will deliver it
+      if (p.blockTimeMs && now - p.blockTimeMs > INTENT_LOOKBACK_MS) continue;
+
+      const matches = await findInvoiceMatches(p.receivedSol, p.blockTimeMs || now);
+      if (matches.length !== 1) continue; // none or ambiguous -> admin tool
+      const m = matches[0]!;
+      await creditOrphanToBalance(
+        telegram,
+        m.userId,
+        p.signature,
+        p.receivedSol,
+        m.kind,
+        m.kind === "purchase" ? m.id : undefined,
+      ).catch(() => {});
+      if (m.kind === "topup") {
+        await db
+          .update(topupInvoicesTable)
+          .set({ status: "completed", txSignature: p.signature })
+          .where(
+            and(
+              eq(topupInvoicesTable.id, m.id),
+              inArray(topupInvoicesTable.status, ["pending", "expired"]),
+            ),
+          )
+          .catch(() => {});
+      }
+    }
+  } catch {
+    // network/db hiccup — retry next cycle
+  } finally {
+    reconcileRunning = false;
+  }
+}
+
+type InvoiceMatch = { kind: "purchase" | "topup"; id: number; userId: number };
+
+// All unfulfilled invoices (purchase intents + topups) whose SOL amount matches
+// `amount` within tolerance, were created before the payment, and are within the
+// lookback window. Used to attribute an orphaned payment to a buyer.
+async function findInvoiceMatches(
+  amount: number,
+  paymentTimeMs: number,
+): Promise<InvoiceMatch[]> {
+  const lo = (amount - MATCH_TOL).toFixed(9);
+  const hi = (amount + MATCH_TOL).toFixed(9);
+  const since = new Date(paymentTimeMs - INTENT_LOOKBACK_MS);
+  const before = new Date(paymentTimeMs + 60000); // small clock slack
+
+  const intents = await db
+    .select({
+      id: invoiceIntentsTable.id,
+      userId: invoiceIntentsTable.userId,
+    })
+    .from(invoiceIntentsTable)
+    .where(
+      and(
+        inArray(invoiceIntentsTable.status, ["open", "expired"]),
+        sql`${invoiceIntentsTable.solAmount} BETWEEN ${lo}::numeric AND ${hi}::numeric`,
+        sql`${invoiceIntentsTable.createdAt} <= ${before}`,
+        sql`${invoiceIntentsTable.createdAt} >= ${since}`,
+      ),
+    );
+
+  const topups = await db
+    .select({
+      id: topupInvoicesTable.id,
+      userId: topupInvoicesTable.userId,
+    })
+    .from(topupInvoicesTable)
+    .where(
+      and(
+        inArray(topupInvoicesTable.status, ["pending", "expired"]),
+        sql`${topupInvoicesTable.solAmount} BETWEEN ${lo}::numeric AND ${hi}::numeric`,
+        sql`${topupInvoicesTable.createdAt} <= ${before}`,
+        sql`${topupInvoicesTable.createdAt} >= ${since}`,
+      ),
+    );
+
+  return [
+    ...intents.map((i) => ({ kind: "purchase" as const, id: i.id, userId: i.userId })),
+    ...topups.map((t) => ({ kind: "topup" as const, id: t.id, userId: t.userId })),
+  ];
+}
+
+// For the admin "Unmatched Payments" tool: inbound wallet payments with no
+// receipt yet, annotated with a best-guess buyer (from a matching invoice) when
+// one exists. Lets the owner recover historical orphans (no persisted intent).
+export async function listUnmatchedPayments(): Promise<
+  Array<{
+    signature: string;
+    receivedSol: number;
+    senderWallet: string | null;
+    blockTimeMs: number;
+    suggestedUserId: number | null;
+  }>
+> {
+  const payments = await fetchInboundPayments(40);
+  if (payments.length === 0) return [];
+  const claimed = await getClaimedSignatures(payments.map((p) => p.signature));
+  const out = [];
+  for (const p of payments) {
+    if (claimed.has(p.signature)) continue;
+    // Never surface a payment that the live purchase flow is still watching — an
+    // admin crediting it would claim the signature first and stop the live flow
+    // from delivering the product (recreating "paid but no product").
+    if (isAmountLive(p.receivedSol)) continue;
+    const matches = await findInvoiceMatches(p.receivedSol, p.blockTimeMs || Date.now());
+    out.push({
+      signature: p.signature,
+      receivedSol: p.receivedSol,
+      senderWallet: p.senderWallet,
+      blockTimeMs: p.blockTimeMs,
+      suggestedUserId: matches.length === 1 ? matches[0]!.userId : null,
+    });
+  }
+  return out;
 }
 
 // Uniqueness step for invoice SOL amounts (1e-5 SOL ≈ a fraction of a cent).
@@ -174,6 +572,7 @@ export async function adminCancelInvoice(
   pendingInvoices.delete(userId);
   if (inv.kind === "purchase") {
     await releaseBasket(userId).catch(() => {});
+    await markPurchaseIntentCanceled(userId).catch(() => {});
   } else if (inv.kind === "topup" && inv.topupInvoiceId) {
     await db
       .update(topupInvoicesTable)
@@ -233,6 +632,27 @@ export function startInvoiceBackgroundChecker(telegram: any) {
       tickerRunning = false;
     }
   }, 5000);
+
+  // Reconciliation safety net: catch payments the live flow missed (process was
+  // restarted, or payment landed after the 15-min window). Run shortly after
+  // startup so a restart immediately recovers anything that came in while down,
+  // then every 60s. Guarded internally so runs never overlap.
+  // Deployment-only: the workspace shares the same mainnet shop wallet but a
+  // SEPARATE dev DB, so auto-crediting from dev could attribute a real payment
+  // to a dev test intent. Only the live deployment auto-reconciles; in the
+  // workspace, use Tools → Payment Recovery → Unmatched Payments to inspect.
+  const isDeployment =
+    process.env.REPLIT_DEPLOYMENT === "1" ||
+    process.env.NODE_ENV === "production";
+  if (isDeployment) {
+    setTimeout(() => {
+      reconcilePayments(invoiceTelegram).catch(() => {});
+    }, 8000);
+    setInterval(() => {
+      if (!invoiceTelegram) return;
+      reconcilePayments(invoiceTelegram).catch(() => {});
+    }, 60000);
+  }
 }
 
 async function runInvoiceTick(telegram: any) {
@@ -243,6 +663,7 @@ async function runInvoiceTick(telegram: any) {
         pendingInvoices.delete(userId);
         if (inv.kind === "purchase") {
           await releaseBasket(userId).catch(() => {});
+          await markPurchaseIntentExpired(userId).catch(() => {});
         } else if (inv.kind === "topup" && inv.topupInvoiceId) {
           await db
             .update(topupInvoicesTable)
@@ -486,6 +907,14 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
       },
     });
   }
+  // Persist a durable record of this invoice so a payment that arrives after a
+  // restart or after the live window closes can still be matched to this buyer.
+  await recordPurchaseIntent(
+    telegramId,
+    solAmount,
+    eurAmount,
+    expiresAt.getTime(),
+  ).catch(() => {});
 }
 
 // Scan the shop wallet's recent transactions for an incoming payment of at least
@@ -937,6 +1366,12 @@ export async function finalizePurchase(
   }
 
   if (!isPaynow) await releaseBasket(telegramId);
+
+  // This buyer's SOL invoice was satisfied and product delivered — close out the
+  // persisted intent so the reconciliation sweep never re-credits this payment.
+  if (txSignature) {
+    await markPurchaseIntentFulfilled(telegramId, txSignature).catch(() => {});
+  }
 
   if (discountCode) {
     await db

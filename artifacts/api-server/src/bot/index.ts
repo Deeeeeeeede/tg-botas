@@ -146,6 +146,9 @@ import {
   showPaymentRecoveryMenu,
   showOrderRecoveryById,
   renderOrderRecovery,
+  showUnmatchedPayments,
+  pickUnmatchedPayment,
+  creditUnmatchedPayment,
   showBackupTokens,
   deleteBackupToken,
   showChangeWallet,
@@ -840,6 +843,15 @@ export function createBot(token?: string): Telegraf {
           ]),
         },
       );
+      return;
+    }
+
+    if (step === "admin:credit_unmatched") {
+      const targetId = Number(text.trim());
+      if (isNaN(targetId) || targetId <= 0) {
+        return ctx.reply("Send a valid Telegram ID (numbers only):");
+      }
+      await creditUnmatchedPayment(ctx, targetId);
       return;
     }
 
@@ -1947,6 +1959,9 @@ export function createBot(token?: string): Telegraf {
         }
         if (sub === "recover")
           return showOrderRecoveryById(ctx, parseInt(parts[1]!));
+        if (sub === "unmatched") return showUnmatchedPayments(ctx);
+        if (sub === "unmatched_pick")
+          return pickUnmatchedPayment(ctx, parseInt(parts[1]!));
         if (sub === "refund") return showRecentPurchasesForRefund(ctx);
         if (sub === "do_refund") return showRefundConfirm(ctx, parseInt(parts[1]!));
         if (sub === "confirm_refund")

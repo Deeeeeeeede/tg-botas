@@ -17,7 +17,12 @@ import {
 } from "../keyboards";
 import { formatEur, formatDate } from "../utils";
 import { clearExpiredReservations, getSetting, setSetting } from "../db";
-import { listPendingInvoices, adminCancelInvoice } from "./payments";
+import {
+  listPendingInvoices,
+  adminCancelInvoice,
+  listUnmatchedPayments,
+  creditOrphanToBalance,
+} from "./payments";
 
 export async function showToolsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
@@ -275,6 +280,12 @@ export async function showPaymentRecoveryMenu(
   rows.push([
     { text: "🔎 Look up by Queue ID", callback_data: "tools:recover_manual" },
   ]);
+  rows.push([
+    {
+      text: "🪙 Unmatched Wallet Payments",
+      callback_data: "tools:unmatched",
+    },
+  ]);
   rows.push([BACK_BTN("admin:tools")]);
 
   const intro = purchases.length
@@ -335,6 +346,137 @@ export async function showOrderRecoveryById(
     return;
   }
   await renderOrderRecovery(ctx, purchase);
+}
+
+// ── Unmatched wallet payments (orphan recovery) ─────────────────────────────
+// Lists inbound SOL payments to the shop wallet that have no receipt yet — i.e.
+// money received but never credited (the bug victims, or any future late arrival
+// the auto-sweep couldn't attribute). The owner picks one and credits the buyer
+// by Telegram ID; the signature claim makes it impossible to credit twice.
+export async function showUnmatchedPayments(
+  ctx: Context & { session: BotSession },
+) {
+  ctx.session.step = undefined;
+  await ctx.answerCbQuery("Scanning the wallet…").catch(() => {});
+  let payments;
+  try {
+    payments = await listUnmatchedPayments();
+  } catch {
+    return ctx.editMessageText(
+      "⚠️ Couldn't reach the blockchain right now. Try again in a moment.",
+      inlineKeyboard([[BACK_BTN("tools:payment_recovery")]]),
+    );
+  }
+
+  if (payments.length === 0) {
+    return ctx.editMessageText(
+      "✅ <b>No unmatched payments</b>\n\nEvery recent wallet payment is already accounted for.",
+      {
+        parse_mode: "HTML",
+        ...inlineKeyboard([[BACK_BTN("tools:payment_recovery")]]),
+      },
+    );
+  }
+
+  // Stash the list so taps can reference a payment by index (signatures are too
+  // long for callback_data).
+  ctx.session.data = {
+    unmatched: payments.map((p) => ({
+      signature: p.signature,
+      receivedSol: p.receivedSol,
+      suggestedUserId: p.suggestedUserId,
+    })),
+  };
+
+  const rows = payments.map((p, i) => [
+    {
+      text:
+        `${p.receivedSol.toFixed(6)} SOL · ${formatDate(new Date(p.blockTimeMs))}` +
+        (p.suggestedUserId ? ` · 👤${p.suggestedUserId}` : ""),
+      callback_data: `tools:unmatched_pick:${i}`,
+    },
+  ]);
+  rows.push([BACK_BTN("tools:payment_recovery")]);
+
+  return ctx.editMessageText(
+    `🪙 <b>Unmatched Wallet Payments</b>\n\n` +
+      `These payments arrived but were never credited. Tap one to credit the buyer.\n` +
+      `👤 = a likely buyer we matched automatically.`,
+    { parse_mode: "HTML", ...inlineKeyboard(rows) },
+  );
+}
+
+export async function pickUnmatchedPayment(
+  ctx: Context & { session: BotSession },
+  index: number,
+) {
+  const list = ctx.session.data?.unmatched as
+    | Array<{ signature: string; receivedSol: number; suggestedUserId: number | null }>
+    | undefined;
+  const item = list?.[index];
+  if (!item) {
+    await ctx.answerCbQuery("List expired — please rescan.", { show_alert: true });
+    return showUnmatchedPayments(ctx);
+  }
+  ctx.session.step = "admin:credit_unmatched";
+  ctx.session.data = {
+    creditSignature: item.signature,
+    creditReceivedSol: item.receivedSol,
+  };
+  const suggested = item.suggestedUserId
+    ? `\n\nSuggested buyer: <code>${item.suggestedUserId}</code> (send this ID to confirm).`
+    : "";
+  return ctx.editMessageText(
+    `🪙 <b>Credit payment</b>\n\n` +
+      `Amount: <b>${item.receivedSol.toFixed(6)} SOL</b>\n` +
+      `Tx: <code>${item.signature.slice(0, 16)}…</code>${suggested}\n\n` +
+      `Send the buyer's <b>Telegram ID</b> to credit them the EUR value of this payment.`,
+    { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("tools:unmatched")]]) },
+  );
+}
+
+// Final step: credit the chosen user for an orphaned payment. Idempotent — the
+// signature claim inside creditOrphanToBalance prevents any double credit.
+export async function creditUnmatchedPayment(
+  ctx: Context & { session: BotSession },
+  targetUserId: number,
+) {
+  const data = ctx.session.data ?? {};
+  const signature = data["creditSignature"] as string | undefined;
+  const receivedSol = data["creditReceivedSol"] as number | undefined;
+  if (!signature || receivedSol === undefined) {
+    ctx.session.step = undefined;
+    return ctx.reply("Session expired — please rescan unmatched payments.");
+  }
+  const user = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, targetUserId))
+    .then((r) => r[0]);
+  if (!user) return ctx.reply("User not found. Send a valid Telegram ID:");
+
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
+
+  const newBalance = await creditOrphanToBalance(
+    ctx.telegram,
+    targetUserId,
+    signature,
+    receivedSol,
+    "purchase",
+  );
+  if (newBalance === null) {
+    await ctx.reply(
+      "⚠️ This payment was already credited (or the price feed was unavailable). No change made.",
+    );
+    return showToolsMenu(ctx);
+  }
+  await ctx.reply(
+    `✅ Credited <code>${targetUserId}</code> for ${receivedSol.toFixed(6)} SOL.\n` +
+      `New balance: <b>${formatEur(newBalance)}</b>.`,
+    { parse_mode: "HTML" },
+  );
+  return showToolsMenu(ctx);
 }
 
 export async function doRefund(ctx: Context & { session: BotSession }, purchaseId: number) {

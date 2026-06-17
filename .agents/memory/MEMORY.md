@@ -6,6 +6,7 @@
 - [Owner/admin authz](owner-admin-authz.md) — owner is auto-added to admins; admin/worker authorization checks for protected callbacks.
 - [Balance write safety](balance-write-safety.md) — balance credits/top-ups must be atomic and single-claim per on-chain signature.
 - [SOL payment matching & sender wallet](sol-payment-matching.md) — each invoice gets a unique SOL amount (sync reserve, no awaits) + disjoint tolerance so a payment binds to one order; senderWallet = biggest balance-drop account.
+- [Lost-payment safety net](lost-payment-reconciliation.md) — purchase invoices must persist to DB (not memory-only) like top-ups; reconcile sweep credits orphans idempotently via UNIQUE tx_signature, skips live amounts, exactly-one-match only, deployment-gated.
 - [Drizzle upsert duplicate target](drizzle-upsert-duplicate-target.md) — onConflict target gotchas in Drizzle upserts.
 - [pnpm audit CVE overrides](pnpm-audit-overrides.md) — security overrides must live in package.json `pnpm.overrides`, not pnpm-workspace.yaml, to be recorded in the lockfile and seen by pnpm audit.
 - [Publishing "Design mode" gate](publishing-design-mode-gate.md) — a kind=design artifact blocks backend-only publishing ("nothing to publish"); delete the design artifact dir to fix.

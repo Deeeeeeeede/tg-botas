@@ -254,3 +254,21 @@ export const topupInvoicesTable = pgTable("bot_topup_invoices", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   expiresAt: timestamp("expires_at").notNull(),
 });
+
+// Durable record of every PURCHASE SOL invoice we hand out. Top-ups already have
+// bot_topup_invoices; purchases previously lived only in memory, so a process
+// restart (republish / VM restart / bot failover) or a payment arriving after
+// the 15-min window left the buyer's payment with nothing to match against —
+// money received, no product, no record. This table is the safety net: every
+// invoice's (userId, solAmount) is persisted so a late/orphaned payment can be
+// matched back to its buyer and credited. status: open|fulfilled|expired|canceled.
+export const invoiceIntentsTable = pgTable("bot_invoice_intents", {
+  id: serial("id").primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull(),
+  solAmount: numeric("sol_amount", { precision: 18, scale: 9 }).notNull(),
+  eurAmount: numeric("eur_amount", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").notNull().default("open"),
+  txSignature: text("tx_signature"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+});

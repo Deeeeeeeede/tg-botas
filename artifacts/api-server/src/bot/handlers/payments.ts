@@ -352,6 +352,89 @@ export async function creditOrphanToBalance(
   return newBalance;
 }
 
+// A buyer paid for a live purchase invoice but sent LESS than the asked amount.
+// We never silently keep their money: claim the signature (idempotent), credit
+// what they actually sent to their balance, release the held stock, and tell
+// them to send the exact amount next time. They can finish with their balance.
+// Returns true when the payment was handled (credited, or already consumed
+// elsewhere) and the invoice can be closed; false when it should be retried
+// later (e.g. the SOL price feed is temporarily unavailable) — never claim the
+// signature without crediting, or the buyer's money would vanish.
+async function handleUnderpaymentToBalance(
+  telegram: any,
+  userId: number,
+  chatId: number,
+  signature: string,
+  receivedSol: number,
+  expectedSol: number,
+  messageId?: number,
+): Promise<boolean> {
+  const solPrice = await getSolPrice();
+  // Price feed down: don't consume the signature now. The caller leaves the
+  // invoice live so the next tick retries once a price is available.
+  if (solPrice <= 0) return false;
+  const creditedEur = receivedSol * solPrice;
+
+  let newBalance: number | null = null;
+  try {
+    newBalance = await db.transaction(async (tx) => {
+      const claimRows = await tx
+        .insert(paymentReceiptsTable)
+        .values({
+          txSignature: signature,
+          userId,
+          kind: "purchase",
+          receivedSol: receivedSol.toFixed(9),
+        })
+        .onConflictDoNothing({ target: paymentReceiptsTable.txSignature })
+        .returning({ id: paymentReceiptsTable.id });
+      if (claimRows.length === 0) return null; // already consumed elsewhere
+      const [u] = await tx
+        .update(usersTable)
+        .set({ balance: sql`${usersTable.balance} + ${creditedEur}` })
+        .where(eq(usersTable.telegramId, userId))
+        .returning({ balance: usersTable.balance });
+      return Number(u?.balance ?? 0);
+    });
+  } catch {
+    return false;
+  }
+  if (newBalance === null) return true; // already consumed elsewhere — done
+
+  await releaseBasket(userId).catch(() => {});
+  await markPurchaseIntentFulfilled(userId, signature).catch(() => {});
+  cancelPendingInvoice(userId);
+  const { refreshAdminLiveStatsNow } = await import("./admin");
+  refreshAdminLiveStatsNow();
+
+  const text =
+    `⚠️ <b>Not enough sent</b>\n\n` +
+    `You sent <b>${receivedSol.toFixed(6)} SOL</b> (${formatEur(creditedEur)}), but this order needed <b>${expectedSol.toFixed(6)} SOL</b>.\n\n` +
+    `We did NOT lose your money — we added <b>${formatEur(creditedEur)}</b> to your balance.\n` +
+    `💰 Balance: <b>${formatEur(newBalance)}</b>\n\n` +
+    `⚠️ <b>NEXT TIME SEND THE EXACT AMOUNT SHOWN.</b>\n` +
+    `<i>KITĄ KARTĄ SIŲSKITE TIKSLIĄ NURODYTĄ SUMĄ.</i>\n\n` +
+    `You can finish your order now using your balance.`;
+  const reply_markup = {
+    inline_keyboard: [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+  };
+  if (messageId) {
+    try {
+      await telegram.editMessageText(chatId, messageId, undefined, text, {
+        parse_mode: "HTML",
+        reply_markup,
+      });
+      return true;
+    } catch {
+      // fall through to a fresh message if the original can't be edited
+    }
+  }
+  await telegram
+    .sendMessage(chatId, text, { parse_mode: "HTML", reply_markup })
+    .catch(() => {});
+  return true;
+}
+
 let reconcileRunning = false;
 // Background sweep: find wallet payments that the live flow never consumed and
 // match each back to its buyer's persisted invoice (purchase intent or topup),
@@ -493,6 +576,38 @@ const UNIQUE_STEP = 1e-5;
 // acceptance window is disjoint from every other active invoice's — a payment
 // can satisfy at most ONE pending invoice.
 export const MATCH_TOL = 2e-6;
+
+// Wider acceptance band (in SOL) for purchases, to forgive customers who don't
+// send the exact amount (they round, or just overpay). It is ONLY ever applied
+// when the payment can belong to exactly ONE in-flight invoice — so it can never
+// let one buyer's payment satisfy a different buyer's order. ~0.02 SOL (a few €).
+const ACCEPT_TOL = 0.02;
+
+// Decide whether an incoming `receivedSol` should be accepted for an invoice
+// expecting `expectedSol`, using the live in-memory invoices to stay unambiguous.
+// Used for PURCHASES only (top-ups still match exactly). Over/under-payment is
+// sorted out by the caller after acceptance.
+function acceptsPayment(receivedSol: number, expectedSol: number): boolean {
+  // Exact tier: each live invoice has a guaranteed-unique amount, so a tight
+  // match is always unambiguous and safe.
+  if (Math.abs(receivedSol - expectedSol) <= MATCH_TOL) return true;
+  // Fuzzy tier: forgive a rounded/over/under payment, but stay strictly
+  // amount-bound. The payment must (a) be within ACCEPT_TOL of THIS invoice and
+  // (b) be within ACCEPT_TOL of EXACTLY ONE live invoice. This keeps attribution
+  // unambiguous and prevents an unrelated inbound deposit (far from any invoice)
+  // from being consumed, even when only one invoice is open.
+  if (Math.abs(receivedSol - expectedSol) > ACCEPT_TOL) return false;
+  let near = 0;
+  for (const inv of pendingInvoices.values()) {
+    if (
+      typeof inv.solAmount === "number" &&
+      Math.abs(inv.solAmount - receivedSol) <= ACCEPT_TOL
+    ) {
+      near++;
+    }
+  }
+  return near === 1;
+}
 
 // Amounts handed out by makeUniqueSolAmount but not yet registered as a live
 // invoice. Reserving synchronously here closes the race where two near-
@@ -926,11 +1041,13 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
 export async function scanForPayment(
   expectedSol: number,
   createdAt: number,
+  opts?: { allowFuzzy?: boolean },
 ): Promise<{
   signature: string;
   receivedSol: number;
   senderWallet: string | null;
 } | null> {
+  const allowFuzzy = opts?.allowFuzzy ?? false;
   const wallet = await getSolWallet();
   const sigCtrl = new AbortController();
   const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
@@ -980,12 +1097,16 @@ export async function scanForPayment(
     const post = tx.meta?.postBalances?.[walletIndex] ?? 0;
     const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
 
-    // Tight two-sided match: the buyer is told to send this exact amount, and
-    // each invoice has a guaranteed-unique amount (makeUniqueSolAmount), so a
-    // payment is bound to one specific order. Only a tiny lamport-dust
-    // tolerance is allowed — this prevents one buyer's payment from satisfying
-    // a different buyer's invoice (no accidental double/cross delivery).
-    if (Math.abs(receivedSol - expectedSol) <= MATCH_TOL) {
+    // Each invoice has a guaranteed-unique amount (makeUniqueSolAmount), so a
+    // tight match binds a payment to one specific order. For purchases we ALSO
+    // accept non-exact amounts (rounded/over/under) via acceptsPayment, but only
+    // when the payment can belong to exactly ONE in-flight invoice — this still
+    // prevents one buyer's payment from satisfying a different buyer's invoice.
+    // Top-ups keep the tight match (allowFuzzy is off).
+    const accepted = allowFuzzy
+      ? acceptsPayment(receivedSol, expectedSol)
+      : Math.abs(receivedSol - expectedSol) <= MATCH_TOL;
+    if (accepted) {
       // Identify who sent the funds: the account with the largest balance
       // decrease (the fee payer / signer who paid). Falls back to the first
       // account key, which is the transaction's fee payer.
@@ -1042,10 +1163,39 @@ export async function checkSolPayment(
   // The global callback_query middleware already answered this callback, so the
   // loading spinner is dismissed; the live ticker keeps the countdown moving.
   try {
-    const hit = await scanForPayment(expectedSol, createdAt);
+    const hit = await scanForPayment(expectedSol, createdAt, {
+      allowFuzzy: true,
+    });
     if (hit) {
-      // Atomically claim this transaction. If another handler already
-      // consumed it (purchase or top-up), skip it — never credit twice.
+      // Under/over is judged in SOL (what the buyer actually sent vs the asked
+      // amount), NOT in EUR — so a SOL price move between invoice creation and
+      // payment never makes an exact payment look like an underpayment.
+      if (expectedSol - hit.receivedSol > MATCH_TOL) {
+        // Customer sent LESS than the invoice amount. Don't deliver; keep their
+        // money safe by crediting it to balance and tell them to send exactly.
+        const chatId = ctx.chat?.id ?? ctx.from!.id;
+        const messageId = (
+          ctx.callbackQuery?.message as { message_id?: number } | undefined
+        )?.message_id;
+        const handled = await handleUnderpaymentToBalance(
+          ctx.telegram,
+          ctx.from!.id,
+          chatId,
+          hit.signature,
+          hit.receivedSol,
+          expectedSol,
+          messageId,
+        );
+        if (handled) {
+          ctx.session.data = undefined;
+          ctx.session.step = undefined;
+          return;
+        }
+        // Price feed unavailable — leave the invoice ticking and retry later.
+        return;
+      }
+      // Paid enough (exact or over). Atomically claim this transaction. If
+      // another handler already consumed it (purchase or top-up), skip it.
       const claimed = await claimSignature(
         hit.signature,
         ctx.from!.id,
@@ -1054,11 +1204,8 @@ export async function checkSolPayment(
       );
       if (claimed) {
         const solPrice = await getSolPrice();
-        const paidEur = hit.receivedSol * solPrice;
-        const expectedEur = Number(
-          data["discountedTotal"] ?? data["pendingEur"] ?? 0,
-        );
-        const overpayEur = Math.max(0, paidEur - expectedEur);
+        const overpaySol = Math.max(0, hit.receivedSol - expectedSol);
+        const overpayEur = overpaySol * solPrice;
         await completePurchase(
           ctx,
           "sol",
@@ -1088,8 +1235,26 @@ async function autoConfirmPurchaseInvoice(
   inv: LiveInvoice,
 ): Promise<boolean> {
   if (!inv.purchase || !inv.solAmount || !inv.createdAt) return false;
-  const hit = await scanForPayment(inv.solAmount, inv.createdAt);
+  const expectedSol = inv.solAmount;
+  const hit = await scanForPayment(expectedSol, inv.createdAt, {
+    allowFuzzy: true,
+  });
   if (!hit) return false;
+  // Underpayment (judged in SOL): don't deliver — credit what they sent to
+  // balance and tell them to send the exact amount next time.
+  if (expectedSol - hit.receivedSol > MATCH_TOL) {
+    // Returns false only if the price feed is down — keep polling so the next
+    // tick retries instead of consuming the payment without crediting.
+    return await handleUnderpaymentToBalance(
+      telegram,
+      userId,
+      inv.chatId,
+      hit.signature,
+      hit.receivedSol,
+      expectedSol,
+      inv.messageId,
+    );
+  }
   const claimed = await claimSignature(
     hit.signature,
     userId,
@@ -1100,8 +1265,8 @@ async function autoConfirmPurchaseInvoice(
   // finalizing this same payment — treat the invoice as done and stop polling.
   if (!claimed) return true;
   const solPrice = await getSolPrice();
-  const paidEur = hit.receivedSol * solPrice;
-  const overpayEur = Math.max(0, paidEur - (inv.expectedEur ?? 0));
+  const overpaySol = Math.max(0, hit.receivedSol - expectedSol);
+  const overpayEur = overpaySol * solPrice;
   await finalizePurchase(
     telegram,
     userId,

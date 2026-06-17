@@ -25,8 +25,33 @@ not wrong-buyer binding.
   via TTL. Top-up invoices MUST also register `solAmount` or they fall out of the
   uniqueness space and can collide with purchases.
 - Matching uses `MATCH_TOL` (2e-6) with step 1e-5, i.e. tol < step/2 → disjoint
-  windows. Overpay-to-balance is intentionally gone; invoices say "send this
-  exact amount". Don't widen the tolerance back without restoring uniqueness math.
+  windows. Don't widen the *exact* tolerance back without restoring uniqueness math.
+
+# Non-exact (fuzzy) acceptance — purchases only
+
+**Rule:** Customers ignore "send the exact amount" and send rounded/approximate
+sums. Purchases accept non-exact payments via a *fuzzy tier* but it MUST stay
+strictly amount-bound: accept only when the payment is within `ACCEPT_TOL`
+(0.02 SOL) of the invoice AND within `ACCEPT_TOL` of EXACTLY ONE live invoice.
+
+**Why:** A naive "only one invoice open → accept any amount" shortcut lets an
+unrelated inbound wallet deposit be hijacked into that open order. Keeping the
+match amount-bounded + unique preserves the disjoint-attribution guarantee even
+with one invoice open. Top-ups stay exact (fuzzy is opt-in via
+`scanForPayment(..., { allowFuzzy: true })`).
+
+**How to apply:**
+- Judge under/over in **SOL** (`expectedSol - receivedSol`), never EUR — a SOL
+  price move between invoice creation and payment must not reclassify an exact
+  payment as underpaid.
+- Overpay → deliver, credit `overpaySol * price` to balance. Underpay → do NOT
+  deliver; `handleUnderpaymentToBalance` credits exactly what was sent (atomic
+  with the UNIQUE `tx_signature` claim) and warns the buyer.
+- **Never consume a signature without crediting:** if `getSolPrice() <= 0`, the
+  underpay handler returns false and skips the claim; callers leave the invoice
+  live so the next tick retries.
+- Payments >`ACCEPT_TOL` off match nothing live → reconciliation (still tight
+  `MATCH_TOL`) / admin Unmatched Payments recovery.
 
 # Identifying the paying wallet
 

@@ -12,6 +12,7 @@ import {
   cancelPendingInvoice,
   countdownLine,
   scanForPayment,
+  makeUniqueSolAmount,
 } from "./payments";
 import { getUser } from "../db";
 
@@ -64,7 +65,7 @@ export async function handleTopUpAmount(
     return;
   }
 
-  const solAmount = parseFloat((eurAmount / solPrice).toFixed(6));
+  const solAmount = makeUniqueSolAmount(eurAmount / solPrice);
   const expiresAt = addMinutes(new Date(), INVOICE_MINUTES);
 
   await db
@@ -112,6 +113,7 @@ export async function handleTopUpAmount(
     keyboard,
     kind: "topup",
     topupInvoiceId: invoice!.id,
+    solAmount,
   });
 }
 
@@ -124,7 +126,7 @@ async function buildInvoiceText(eurAmount: number, solAmount: number): Promise<s
     `Send exactly:\n<code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${wallet}</code>\n` +
     `────────────────────────\n` +
-    `💡 Sending a little more is fine — the full received amount will be credited to your balance.\n` +
+    `⚠️ Please send <b>this exact amount</b> so we can match your payment.\n` +
     `✅ Press <b>Check Payment</b> after sending.`
   );
 }

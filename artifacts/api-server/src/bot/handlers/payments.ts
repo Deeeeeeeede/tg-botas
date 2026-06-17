@@ -76,11 +76,132 @@ export function countdownLine(expiresAt: number): string {
 }
 
 export function registerPendingInvoice(userId: number, invoice: LiveInvoice) {
+  // The amount was reserved synchronously at allocation time; now that the
+  // invoice is live in pendingInvoices (which clash-checks guard against), we
+  // can release the short-lived reservation.
+  if (typeof invoice.solAmount === "number") {
+    reservedAmounts.delete(invoice.solAmount);
+  }
   pendingInvoices.set(userId, invoice);
 }
 
 export function cancelPendingInvoice(userId: number) {
   pendingInvoices.delete(userId);
+}
+
+// Uniqueness step for invoice SOL amounts (1e-5 SOL ≈ a fraction of a cent).
+const UNIQUE_STEP = 1e-5;
+// On-chain match tolerance. Kept strictly below UNIQUE_STEP/2 so each invoice's
+// acceptance window is disjoint from every other active invoice's — a payment
+// can satisfy at most ONE pending invoice.
+export const MATCH_TOL = 2e-6;
+
+// Amounts handed out by makeUniqueSolAmount but not yet registered as a live
+// invoice. Reserving synchronously here closes the race where two near-
+// simultaneous invoice-creation flows read the same pending-invoice snapshot
+// (before either has registered) and pick the same amount. Entries are released
+// on registerPendingInvoice and pruned by TTL in case creation is abandoned.
+const reservedAmounts = new Map<number, number>(); // amount -> reservedAt(ms)
+const RESERVATION_TTL_MS = 120000;
+
+// Returns a SOL amount guaranteed distinct (by more than 2*MATCH_TOL) from every
+// currently-active invoice AND every amount reserved-but-not-yet-registered, by
+// adding a small tail in UNIQUE_STEP increments. Two buyers ordering the same
+// EUR total therefore get different SOL totals, so one buyer's payment can never
+// match the other's invoice. This function performs NO awaits, so its
+// snapshot-and-reserve is atomic with respect to other invoice creations.
+export function makeUniqueSolAmount(baseSol: number): number {
+  const now = Date.now();
+  for (const [amt, ts] of reservedAmounts) {
+    if (now - ts > RESERVATION_TTL_MS) reservedAmounts.delete(amt);
+  }
+  const active = [
+    ...Array.from(pendingInvoices.values())
+      .map((i) => i.solAmount)
+      .filter((v): v is number => typeof v === "number"),
+    ...reservedAmounts.keys(),
+  ];
+  const clashes = (candidate: number) =>
+    active.some((a) => Math.abs(a - candidate) <= 2 * MATCH_TOL);
+  const reserve = (candidate: number) => {
+    reservedAmounts.set(candidate, now);
+    return candidate;
+  };
+  // Randomized start so concurrent same-price invoices spread out, then walk
+  // the step space until a non-clashing slot is found. The search is unbounded
+  // (deterministic) so it always returns a truly unique amount.
+  const start = Math.floor(Math.random() * 200) + 1;
+  for (let k = 0; k < 200; k++) {
+    const step = ((start + k - 1) % 200) + 1; // 1..200
+    const candidate = parseFloat((baseSol + step * UNIQUE_STEP).toFixed(6));
+    if (!clashes(candidate)) return reserve(candidate);
+  }
+  for (let step = 201; step < 1_000_000; step++) {
+    const candidate = parseFloat((baseSol + step * UNIQUE_STEP).toFixed(6));
+    if (!clashes(candidate)) return reserve(candidate);
+  }
+  // Practically unreachable; reserve whatever we computed last.
+  return reserve(parseFloat((baseSol + UNIQUE_STEP).toFixed(6)));
+}
+
+// Snapshot of the live in-memory pending invoices, for the admin "Cancel
+// Pending Order" tool. These exist only while a buyer has an open invoice.
+export function listPendingInvoices(): Array<{
+  userId: number;
+  kind: "purchase" | "topup";
+  expiresAt: number;
+  solAmount?: number;
+  expectedEur?: number;
+}> {
+  return Array.from(pendingInvoices.entries()).map(([userId, inv]) => ({
+    userId,
+    kind: inv.kind,
+    expiresAt: inv.expiresAt,
+    solAmount: inv.solAmount,
+    expectedEur: inv.expectedEur,
+  }));
+}
+
+// Admin-initiated cancel of a buyer's open invoice: stops the bot watching the
+// wallet for that order (so it can't auto-deliver after a direct/manual deal),
+// releases any reserved stock, and tells the buyer the order was cancelled.
+export async function adminCancelInvoice(
+  telegram: any,
+  userId: number,
+): Promise<boolean> {
+  const inv = pendingInvoices.get(userId);
+  if (!inv) return false;
+  pendingInvoices.delete(userId);
+  if (inv.kind === "purchase") {
+    await releaseBasket(userId).catch(() => {});
+  } else if (inv.kind === "topup" && inv.topupInvoiceId) {
+    await db
+      .update(topupInvoicesTable)
+      .set({ status: "expired" })
+      .where(
+        and(
+          eq(topupInvoicesTable.id, inv.topupInvoiceId),
+          eq(topupInvoicesTable.status, "pending"),
+        ),
+      )
+      .catch(() => {});
+  }
+  await telegram
+    .editMessageText(
+      inv.chatId,
+      inv.messageId,
+      undefined,
+      "🛑 <b>Order Cancelled</b>\n\nThis order was cancelled by the shop. " +
+        "If you already paid or arranged payment directly, please contact the shop.",
+      {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+        },
+      },
+    )
+    .catch(() => {});
+  return true;
 }
 
 // Single ticker that keeps every active invoice's countdown live by editing the
@@ -280,7 +401,7 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     return;
   }
 
-  const solAmount = parseFloat((eurAmount / solPrice).toFixed(6));
+  const solAmount = makeUniqueSolAmount(eurAmount / solPrice);
   const expiresAt = addMinutes(new Date(), 15);
 
   const telegramId = ctx.from!.id;
@@ -312,7 +433,7 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
     `Send exactly: <code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${(await getSolWallet())}</code>\n` +
     `────────────────────────\n` +
-    `💡 Sending a little more is fine — any overpay goes to your balance.`;
+    `⚠️ Please send <b>this exact amount</b> so we can match your payment to this order.`;
 
   const text = baseText + "\n\n" + countdownLine(expiresAt.getTime());
 
@@ -428,7 +549,12 @@ export async function scanForPayment(
     const post = tx.meta?.postBalances?.[walletIndex] ?? 0;
     const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
 
-    if (receivedSol >= expectedSol * 0.99) {
+    // Tight two-sided match: the buyer is told to send this exact amount, and
+    // each invoice has a guaranteed-unique amount (makeUniqueSolAmount), so a
+    // payment is bound to one specific order. Only a tiny lamport-dust
+    // tolerance is allowed — this prevents one buyer's payment from satisfying
+    // a different buyer's invoice (no accidental double/cross delivery).
+    if (Math.abs(receivedSol - expectedSol) <= MATCH_TOL) {
       // Identify who sent the funds: the account with the largest balance
       // decrease (the fee payer / signer who paid). Falls back to the first
       // account key, which is the transaction's fee payer.

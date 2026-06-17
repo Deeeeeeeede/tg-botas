@@ -138,6 +138,8 @@ import {
 import {
   showToolsMenu,
   clearAllReservations,
+  showPendingOrders,
+  cancelPendingOrder,
   showRecentPurchasesForRefund,
   showRefundConfirm,
   doRefund,
@@ -1932,6 +1934,9 @@ export function createBot(token?: string): Telegraf {
         if (!(await isAdmin(ctx.from.id))) return;
         const sub = parts[0];
         if (sub === "clear_res") return clearAllReservations(ctx);
+        if (sub === "pending_orders") return showPendingOrders(ctx);
+        if (sub === "cancel_pending")
+          return cancelPendingOrder(ctx, parseInt(parts[1]!));
         if (sub === "payment_recovery") return showPaymentRecoveryMenu(ctx);
         if (sub === "recover_manual") {
           ctx.session.step = "admin:payment_recovery";

@@ -55,7 +55,7 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 - **Users Menu** — search, ban/unban, reseller management, CSV export
 - **Discounts Menu** — discount codes, product discounts (🔥), reseller discounts (👑), tier system (🏆)
 - **Communications** — broadcast to all users, welcome message templates, reviews
-- **Tools & Settings** — add balance, clear reservations, payment recovery, refunds, backup tokens
+- **Tools & Settings** — add balance, clear reservations, cancel a buyer's pending order, payment recovery, refunds, backup tokens
 - **Workers (/klad)** — manage trusted product uploaders; per-worker "View Uploads" lists what each worker uploaded (size, price, status, date), paginated
 
 ## Customer Tier Defaults
@@ -78,7 +78,10 @@ A full-featured Telegram shop bot with admin management, product catalog, custom
 - Automatic token failover: on startup the bot tries the main `BOT_TOKEN` first, then saved backup tokens (Tools → Backup Tokens). A health check (`getMe` every 60s) detects a revoked/deleted token (401/404) and relaunches on the next available token. The active token is flagged `[ACTIVE]` in the backup tokens list. Note: a backup bot has a different @username, so customers must open the new bot link — but all data is shared via the same database.
 - Session state stored in memory (Telegraf built-in session)
 - Price calculation applies discounts in order: fire (sale) → crown (reseller) → trophy (tier rule) → tier global % → discount code
-- SOL payment integrity: every accepted on-chain transaction is recorded once in `bot_payment_receipts` (UNIQUE `tx_signature`). The claim is an atomic `INSERT ... ON CONFLICT DO NOTHING`, so a single payment can be credited at most once across both product purchases and balance top-ups. Top-up finalization (invoice complete + signature claim + balance credit) runs inside one DB transaction, so it is all-or-nothing. Known residual limitations: (1) payments are matched by wallet amount + time window, not bound to a specific buyer — two users paying the same amount in the same window is the only collision case; (2) `completePurchase` is not yet a single transaction, though it refunds to balance on every early-exit branch.
+- SOL payment integrity: every accepted on-chain transaction is recorded once in `bot_payment_receipts` (UNIQUE `tx_signature`). The claim is an atomic `INSERT ... ON CONFLICT DO NOTHING`, so a single payment can be credited at most once across both product purchases and balance top-ups. Top-up finalization (invoice complete + signature claim + balance credit) runs inside one DB transaction, so it is all-or-nothing.
+- Payment→invoice binding: each open invoice (purchase and top-up) gets a *guaranteed-unique* SOL amount via `makeUniqueSolAmount`, and on-chain matching uses a tight tolerance (`MATCH_TOL` = 2e-6, strictly < half the 1e-5 uniqueness step) so each invoice's acceptance window is disjoint. A payment therefore matches at most one open invoice — one buyer's payment can never satisfy another's order. `makeUniqueSolAmount` is synchronous and reserves its amount before returning to close the create-time race. Overpay-to-balance is intentionally removed; invoices say "send this exact amount". The paying wallet is captured (`purchasesTable.senderWallet`, biggest balance-drop account) and shown in Today's Sales.
+- Direct/manual deals: if a buyer arranges to pay the owner directly, the admin can use **Tools → Cancel Pending Order** to drop the bot's watcher for that buyer's open invoice (releasing reserved stock and notifying the buyer) so the bot won't also auto-deliver.
+- Known residual limitation: `completePurchase` is not yet a single transaction, though it refunds to balance on every early-exit branch.
 - Workers use `/klad` and can only upload to existing city/district/type/size combinations
 - Products store content as either text (inline) or Telegram file_id (for photos, documents, videos, GIFs)
 

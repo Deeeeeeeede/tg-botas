@@ -17,6 +17,7 @@ import {
 } from "../keyboards";
 import { formatEur, formatDate } from "../utils";
 import { clearExpiredReservations, getSetting, setSetting } from "../db";
+import { listPendingInvoices, adminCancelInvoice } from "./payments";
 
 export async function showToolsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
@@ -38,6 +39,7 @@ export async function showToolsMenu(ctx: Context & { session: BotSession }) {
     [{ text: "🖼 Set Bot Media", callback_data: "tools:set_media" }],
     [{ text: "🚫 Remove Bot Media", callback_data: "tools:remove_media" }],
     [{ text: "🗑 Clear Reservations", callback_data: "tools:clear_res" }],
+    [{ text: "🛑 Cancel Pending Order", callback_data: "tools:pending_orders" }],
     [{ text: "💳 Payment Recovery", callback_data: "tools:payment_recovery" }],
     [{ text: "↩ Product Refund", callback_data: "tools:refund" }],
     [{ text: "🔑 Backup Tokens", callback_data: "tools:backup_tokens" }],
@@ -91,6 +93,82 @@ export async function clearAllReservations(ctx: Context & { session: BotSession 
   await db.delete(basketsTable);
   await ctx.answerCbQuery(`Cleared ${total} basket entries.`, { show_alert: true });
   await showToolsMenu(ctx);
+}
+
+// Lists buyers who currently have an open (unpaid) invoice the bot is watching.
+// Cancelling one stops the bot auto-delivering after a direct/manual deal.
+export async function showPendingOrders(ctx: Context & { session: BotSession }) {
+  const pending = listPendingInvoices();
+
+  if (pending.length === 0) {
+    const kb = inlineKeyboard([[BACK_BTN("admin:tools")]]);
+    const text =
+      "🛑 <b>Cancel Pending Order</b>\n\nThere are no open orders right now.";
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+    } else {
+      await ctx.reply(text, { parse_mode: "HTML", ...kb });
+    }
+    return;
+  }
+
+  const now = Date.now();
+  const rows: { text: string; callback_data: string }[][] = [];
+  let body = "";
+  let n = 1;
+  for (const p of pending) {
+    const user = await db
+      .select({
+        username: usersTable.username,
+        firstName: usersTable.firstName,
+      })
+      .from(usersTable)
+      .where(eq(usersTable.telegramId, p.userId))
+      .then((r) => r[0]);
+    const who = user?.username
+      ? `@${user.username}`
+      : user?.firstName ?? `#${p.userId}`;
+    const mins = Math.max(0, Math.ceil((p.expiresAt - now) / 60000));
+    const kind = p.kind === "topup" ? "Top-Up" : "Order";
+    const amount = p.expectedEur != null ? ` — ${formatEur(p.expectedEur)}` : "";
+    const sol = p.solAmount != null ? ` (${p.solAmount} SOL)` : "";
+    body +=
+      `<b>${n}.</b> ${who} — ${kind}${amount}${sol}\n` +
+      `   ⏳ ${mins} min left\n`;
+    rows.push([
+      {
+        text: `🛑 Cancel #${n} (${who})`,
+        callback_data: `tools:cancel_pending:${p.userId}`,
+      },
+    ]);
+    n++;
+  }
+  rows.push([BACK_BTN("admin:tools")]);
+
+  const text =
+    `🛑 <b>Cancel Pending Order</b>\n\n` +
+    `These buyers have an open invoice the bot is watching. ` +
+    `Cancel one if the buyer paid you directly, so the bot won't also deliver.\n\n` +
+    body;
+
+  const kb = inlineKeyboard(rows);
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, { parse_mode: "HTML", ...kb });
+  } else {
+    await ctx.reply(text, { parse_mode: "HTML", ...kb });
+  }
+}
+
+export async function cancelPendingOrder(
+  ctx: Context & { session: BotSession },
+  userId: number,
+) {
+  const ok = await adminCancelInvoice(ctx.telegram, userId);
+  await ctx.answerCbQuery(
+    ok ? "✅ Order cancelled." : "Order no longer pending.",
+    { show_alert: true },
+  );
+  await showPendingOrders(ctx);
 }
 
 export async function showRecentPurchasesForRefund(ctx: Context & { session: BotSession }) {

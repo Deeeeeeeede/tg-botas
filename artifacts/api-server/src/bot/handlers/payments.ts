@@ -374,7 +374,11 @@ export async function showSolInvoice(ctx: Context & { session: BotSession }) {
 export async function scanForPayment(
   expectedSol: number,
   createdAt: number,
-): Promise<{ signature: string; receivedSol: number } | null> {
+): Promise<{
+  signature: string;
+  receivedSol: number;
+  senderWallet: string | null;
+} | null> {
   const wallet = await getSolWallet();
   const sigCtrl = new AbortController();
   const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
@@ -425,7 +429,22 @@ export async function scanForPayment(
     const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
 
     if (receivedSol >= expectedSol * 0.99) {
-      return { signature: sig.signature, receivedSol };
+      // Identify who sent the funds: the account with the largest balance
+      // decrease (the fee payer / signer who paid). Falls back to the first
+      // account key, which is the transaction's fee payer.
+      const pres: number[] = tx.meta?.preBalances ?? [];
+      const posts: number[] = tx.meta?.postBalances ?? [];
+      let senderWallet: string | null = accountKeys[0] ?? null;
+      let maxDecrease = 0;
+      for (let i = 0; i < accountKeys.length; i++) {
+        if (i === walletIndex) continue;
+        const decrease = (pres[i] ?? 0) - (posts[i] ?? 0);
+        if (decrease > maxDecrease) {
+          maxDecrease = decrease;
+          senderWallet = accountKeys[i] ?? senderWallet;
+        }
+      }
+      return { signature: sig.signature, receivedSol, senderWallet };
     }
   }
   return null;
@@ -483,7 +502,13 @@ export async function checkSolPayment(
           data["discountedTotal"] ?? data["pendingEur"] ?? 0,
         );
         const overpayEur = Math.max(0, paidEur - expectedEur);
-        await completePurchase(ctx, "sol", overpayEur, hit.signature);
+        await completePurchase(
+          ctx,
+          "sol",
+          overpayEur,
+          hit.signature,
+          hit.senderWallet,
+        );
         return;
       }
     }
@@ -529,6 +554,7 @@ async function autoConfirmPurchaseInvoice(
     overpayEur,
     hit.signature,
     inv.messageId,
+    hit.senderWallet,
   );
   return true;
 }
@@ -637,6 +663,7 @@ export async function finalizePurchase(
   overpayEur = 0,
   txSignature?: string,
   editMessageId?: number,
+  senderWallet?: string | null,
 ): Promise<void> {
   cancelPendingInvoice(telegramId);
   const user = await getUser(telegramId);
@@ -751,6 +778,7 @@ export async function finalizePurchase(
           discountCodeUsed: discountCode,
           paymentMethod,
           txSignature,
+          senderWallet: senderWallet ?? null,
         });
         return claimed;
       })
@@ -863,6 +891,7 @@ export async function completePurchase(
   paymentMethod: string,
   overpayEur = 0,
   txSignature?: string,
+  senderWallet?: string | null,
 ): Promise<void> {
   const telegramId = ctx.from!.id;
   const data = ctx.session.data ?? {};
@@ -893,6 +922,7 @@ export async function completePurchase(
     overpayEur,
     txSignature,
     editMessageId,
+    senderWallet,
   );
 }
 

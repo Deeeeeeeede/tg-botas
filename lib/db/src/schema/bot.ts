@@ -128,6 +128,7 @@ export const purchasesTable = pgTable("bot_purchases", {
   discountCodeUsed: text("discount_code_used"),
   paymentMethod: text("payment_method").notNull().default("balance"),
   txSignature: text("tx_signature"),
+  senderWallet: text("sender_wallet"),
   refunded: boolean("refunded").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

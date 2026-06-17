@@ -216,6 +216,8 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
       pricePaid: purchasesTable.pricePaid,
       createdAt: purchasesTable.createdAt,
       refunded: purchasesTable.refunded,
+      paymentMethod: purchasesTable.paymentMethod,
+      senderWallet: purchasesTable.senderWallet,
       username: usersTable.username,
       firstName: usersTable.firstName,
       telegramId: usersTable.telegramId,
@@ -294,10 +296,13 @@ export async function salesToday(ctx: Context & { session: BotSession }, page = 
           } catch {}
         }
       }
+      const walletHint = r.senderWallet
+        ? `\n  💳 paid from <code>${r.senderWallet}</code>`
+        : "";
       text +=
         `<b>${num}.</b> ${time} — <b>${buyer}</b>\n` +
         `  ${r.typeEmoji} ${r.typeName} ${r.size} — ${formatEur(r.pricePaid)}${refundMark}` +
-        `${contentHint}\n\n`;
+        `${contentHint}${walletHint}\n\n`;
     });
   }
 
@@ -341,6 +346,8 @@ export async function viewSaleContent(ctx: Context & { session: BotSession }, pu
       username: usersTable.username,
       firstName: usersTable.firstName,
       pricePaid: purchasesTable.pricePaid,
+      senderWallet: purchasesTable.senderWallet,
+      txSignature: purchasesTable.txSignature,
     })
     .from(purchasesTable)
     .innerJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
@@ -360,6 +367,15 @@ export async function viewSaleContent(ctx: Context & { session: BotSession }, pu
 
   // Send the header as plain text
   await ctx.reply(header, { parse_mode: "HTML" });
+
+  // Show which wallet paid (for SOL payments) so the admin can reconcile
+  // against direct/manual deals.
+  if (row.senderWallet) {
+    await ctx.reply(
+      `💳 Paid from wallet:\n<code>${row.senderWallet}</code>`,
+      { parse_mode: "HTML" },
+    );
+  }
 
   // Collect all files to send (same logic as sendProductMedia)
   const files: { fileId: string; fileType: string }[] = [];

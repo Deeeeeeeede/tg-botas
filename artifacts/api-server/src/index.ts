@@ -9,10 +9,12 @@ try {
     value(instance: unknown) {
       if (instance == null) return false;
       const i = instance as Record<string, unknown>;
-      return (
-        typeof i["aborted"] === "boolean" &&
-        typeof i["addEventListener"] === "function"
-      );
+      // Check for AbortSignal duck-typing: aborted property + addEventListener method
+      // This handles both abort-controller and native Node.js AbortSignal
+      const hasAborted = typeof i["aborted"] === "boolean";
+      const hasAddEventListener = typeof i["addEventListener"] === "function";
+      const hasReason = "reason" in i; // Native AbortSignal has a 'reason' property
+      return (hasAborted && hasAddEventListener) || (hasAborted && hasReason);
     },
   });
 } catch {}
@@ -42,6 +44,17 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
+
+logger.info(
+  {
+    port,
+    env: {
+      NODE_ENV: process.env["NODE_ENV"],
+      REPLIT_DEPLOYMENT: process.env["REPLIT_DEPLOYMENT"],
+    },
+  },
+  "Starting API server",
+);
 
 async function seedDefaults() {
   const [tierCount] = await db.select({ count: count() }).from(tierLevelsTable);
@@ -166,17 +179,31 @@ function scheduleHealthCheck(bot: Telegraf, token: string): void {
 
 // Launch a validated bot, register it as active, and start health monitoring.
 const POLLING_RESTART_DELAY_MS = 5_000;
+const MAX_POLL_RESTARTS = 5;
 
 async function activateBot(
   bot: Telegraf,
   token: string,
   meta: { username?: string; isBackup: boolean; tokenIndex: number },
 ): Promise<void> {
-  // bot.launch() resolves only when polling STOPS. A 409 Conflict (another
-  // instance briefly polling the same token, e.g. during a redeploy) makes the
-  // loop reject and stay dead — Telegraf does NOT auto-restart, and the getMe
-  // health check still succeeds so failover never triggers. So we relaunch
-  // ourselves after a short delay, as long as this bot is still the live one.
+  let restartCount = 0;
+
+  const getErrorReason = (err: unknown): string => {
+    const e = err as {
+      response?: { description?: string; error_code?: number };
+      message?: string;
+      code?: number | string;
+    };
+    return (
+      e?.response?.description ??
+      e?.message ??
+      (typeof e?.code === "string" || typeof e?.code === "number"
+        ? String(e.code)
+        : undefined) ??
+      String(err)
+    );
+  };
+
   const launch = (): void => {
     bot
       .launch({ dropPendingUpdates: true })
@@ -185,16 +212,67 @@ async function activateBot(
       })
       .catch((err) => {
         if (activeBot !== bot || failoverInProgress) return;
+
+        restartCount += 1;
+        const reason = getErrorReason(err);
+        const errorCode = (err as { response?: { error_code?: number }; code?: number })?.response?.error_code ??
+          (err as { code?: number })?.code;
+        const isConflict = errorCode === 409 || /409|conflict/i.test(reason);
+        const delay = Math.min(
+          POLLING_RESTART_DELAY_MS * 2 ** (restartCount - 1),
+          60_000,
+        );
+
+        if (isConflict) {
+          logger.error(
+            { err, tokenIndex: meta.tokenIndex, restartCount, reason, errorCode },
+            "Bot polling failed due to 409 Conflict — stopping retries",
+          );
+          return;
+        }
+
+        if (restartCount > MAX_POLL_RESTARTS) {
+          logger.error(
+            { err, tokenIndex: meta.tokenIndex, restartCount, reason },
+            "Bot polling stopped permanently after too many restarts",
+          );
+          return;
+        }
+
         logger.warn(
-          { err, tokenIndex: meta.tokenIndex },
+          { err, tokenIndex: meta.tokenIndex, restartCount, reason, delay },
           "Bot polling stopped — restarting polling shortly",
         );
+
         const t = setTimeout(() => {
           if (activeBot === bot && !failoverInProgress) launch();
-        }, POLLING_RESTART_DELAY_MS);
+        }, delay);
         t.unref?.();
       });
   };
+
+  try {
+    const webhookInfo = await bot.telegram.getWebhookInfo();
+    logger.info(
+      { tokenIndex: meta.tokenIndex, webhookInfo },
+      "Current webhook info before polling start",
+    );
+  } catch (err) {
+    logger.warn(
+      { err, tokenIndex: meta.tokenIndex },
+      "Failed to query getWebhookInfo before polling",
+    );
+  }
+
+  try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    logger.info({ tokenIndex: meta.tokenIndex }, "Deleted webhook before polling start");
+  } catch (err) {
+    logger.warn(
+      { err, tokenIndex: meta.tokenIndex },
+      "Failed to delete webhook before polling; continuing anyway",
+    );
+  }
 
   launch();
   activeBot = bot;
@@ -203,7 +281,14 @@ async function activateBot(
   logger.info(meta, "Telegram bot started (long polling)");
 }
 
+let botStartGuard = false;
+
 async function startBotWithFailover(): Promise<void> {
+  if (botStartGuard) {
+    logger.warn("Bot startup already initiated; skipping duplicate startBotWithFailover call");
+    return;
+  }
+  botStartGuard = true;
   // Telegram allows only ONE long-polling instance per bot token. The live
   // deployment (Reserved VM) polls BOT_TOKEN 24/7. If the workspace/dev process
   // also polled BOT_TOKEN, the two would fight over every update (409 Conflict),
@@ -314,5 +399,21 @@ server.on("listening", () => {
     });
 });
 
-process.once("SIGINT", () => activeBot?.stop("SIGINT"));
-process.once("SIGTERM", () => activeBot?.stop("SIGTERM"));
+process.once("SIGINT", () => {
+  logger.info("SIGINT received — stopping bot");
+  activeBot?.stop("SIGINT");
+});
+process.once("SIGTERM", () => {
+  logger.info("SIGTERM received — stopping bot");
+  activeBot?.stop("SIGTERM");
+});
+
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception");
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled promise rejection");
+  process.exit(1);
+});

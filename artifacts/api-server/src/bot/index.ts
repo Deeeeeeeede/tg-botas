@@ -1,3 +1,4 @@
+import { uploadImage } from "../lib/uploadImage";
 import { Telegraf, session } from "telegraf";
 import { message } from "telegraf/filters";
 import { db } from "@workspace/db";
@@ -987,167 +988,116 @@ export function createBot(token?: string): Telegraf {
       return;
     }
 
-    if (step === "admin:set_home_media") {
-      if (!(await isAdmin(ctx.from.id))) return;
-      const msg = ctx.message as any;
-      let fileId: string | undefined;
-      let mediaType: string | undefined;
-      if (msg?.animation) {
-        fileId = msg.animation.file_id;
-        mediaType = "animation";
-      } else if (msg?.video) {
-        fileId = msg.video.file_id;
-        mediaType = "video";
-      } else if (msg?.photo?.length) {
-        fileId = msg.photo[msg.photo.length - 1].file_id;
-        mediaType = "photo";
-      } else if (msg?.document) {
-        fileId = msg.document.file_id;
-        mediaType = "photo";
-      }
-      if (!fileId) {
-        await ctx.reply("Please send a GIF, photo, or video file.");
-        return;
-      }
-      await setSetting("home_media_file_id", fileId);
-      await setSetting("home_media_type", mediaType!);
-      ctx.session.step = undefined;
-      await ctx.reply("✅ Home screen media updated! It will show on the next /start.");
-      await showToolsMenu(ctx);
-      return;
-    }
+async function handleFileMessage(ctx: any) {
+  const step = ctx.session.step as string | undefined;
+  const data = (ctx.session.data ?? {}) as Record<string, any>;
 
-    if (step === "shop:review") {
-      const user = await db
-        .select()
-        .from(usersTable)
-        .where(eq(usersTable.telegramId, ctx.from.id))
-        .then((r) => r[0]);
-      await db.insert(reviewsTable).values({
-        userId: ctx.from.id,
-        username: user?.username,
-        text,
-      });
-      ctx.session.step = undefined;
-      await ctx.reply("⭐ Thank you for your review!");
-      await showHome(ctx);
-      return;
-    }
-
-    if (
-      step === "shop:apply_code_paynow" ||
-      step === "shop:apply_code_basket"
-    ) {
-      const returnTo = step === "shop:apply_code_paynow" ? "paynow" : "basket";
-      await applyDiscountCode(ctx, text, returnTo);
-      return;
-    }
-
-    if (step === "topup:enter_amount") {
-      await handleTopUpAmount(ctx, text);
-      return;
-    }
-
-    if (step === "klad:add_text") {
-      const { productId, backTo } = data as { productId: number; backTo?: string };
-      await db
-        .update(productsTable)
-        .set({ content: text.trim() })
-        .where(eq(productsTable.id, productId));
-      ctx.session.step = undefined;
-      ctx.session.data = undefined;
-      await ctx.reply(
-        "✅ Text saved! It will be sent to the buyer alongside the photo.",
-        inlineKeyboard([
-          [{ text: "⬅ Back to upload", callback_data: backTo ?? `klad:view_upload:${productId}` }],
-        ]),
-      );
-      return;
-    }
-
-    if (step === "klad:size_custom") {
-      const { cityId, districtId, typeId, price } = data;
-      const size = text.trim();
-      ctx.session.data = {
-        cityId,
-        districtId,
-        typeId,
-        size,
-        price,
-        addedBy: ctx.from.id,
-      };
-      ctx.session.step = "admin:add_product:content";
-      await ctx.reply(
-        "Send the product files (all files go to ONE buyer). Type /done when finished.",
-        inlineKeyboard([[BACK_BTN("klad:exit")]]),
-      );
-      return;
-    }
-  });
-
-  async function handleFileMessage(ctx: any) {
-    const step = ctx.session.step as string | undefined;
-    const data = (ctx.session.data ?? {}) as Record<string, any>;
-
-    if (step === "admin:set_home_media") {
-      if (!(await isAdmin(ctx.from.id))) return;
-      const msg = ctx.message as any;
-      let mediaFileId: string | undefined;
-      let mediaType: string | undefined;
-      if (msg?.animation) {
-        mediaFileId = msg.animation.file_id;
-        mediaType = "animation";
-      } else if (msg?.video) {
-        mediaFileId = msg.video.file_id;
-        mediaType = "video";
-      } else if (msg?.photo?.length) {
-        mediaFileId = msg.photo[msg.photo.length - 1].file_id;
-        mediaType = "photo";
-      } else if (msg?.document) {
-        mediaFileId = msg.document.file_id;
-        mediaType = "photo";
-      }
-      if (!mediaFileId) {
-        await ctx.reply("Please send a GIF, photo, or video file.");
-        return;
-      }
-      await setSetting("home_media_file_id", mediaFileId);
-      await setSetting("home_media_type", mediaType!);
-      ctx.session.step = undefined;
-      await ctx.reply(
-        "✅ Home screen media updated! It will show on the next /start.",
-      );
-      await showToolsMenu(ctx);
-      return;
-    }
-
-    const validSteps = [
-      "admin:add_product:content",
-      "admin:add_product:more_files",
-      "admin:add_product:bulk",
-    ];
-    if (!step || !validSteps.includes(step)) return;
+  // =====================================================
+  // 🟢 HOME MEDIA UPLOAD (FIXED + SUPABASE URL STORAGE)
+  // =====================================================
+  if (step === "admin:set_home_media") {
+    if (!(await isAdmin(ctx.from.id))) return;
 
     const msg = ctx.message as any;
-    let fileId: string;
-    let fileType: string;
 
+    let buffer: Buffer | undefined;
+    let mediaType: string | undefined;
+
+    try {
+      if (msg?.animation) {
+        const link = await ctx.telegram.getFileLink(msg.animation.file_id);
+        const res = await fetch(link.href);
+        buffer = Buffer.from(await res.arrayBuffer());
+        mediaType = "animation";
+      } else if (msg?.video) {
+        const link = await ctx.telegram.getFileLink(msg.video.file_id);
+        const res = await fetch(link.href);
+        buffer = Buffer.from(await res.arrayBuffer());
+        mediaType = "video";
+      } else if (msg?.photo?.length) {
+        const file = msg.photo[msg.photo.length - 1];
+        const link = await ctx.telegram.getFileLink(file.file_id);
+        const res = await fetch(link.href);
+        buffer = Buffer.from(await res.arrayBuffer());
+        mediaType = "photo";
+      } else if (msg?.document) {
+        const link = await ctx.telegram.getFileLink(msg.document.file_id);
+        const res = await fetch(link.href);
+        buffer = Buffer.from(await res.arrayBuffer());
+        mediaType = "photo";
+      }
+    } catch (err) {
+      console.error(err);
+      await ctx.reply("❌ Failed to read file from Telegram.");
+      return;
+    }
+
+    if (!buffer) {
+      await ctx.reply("Please send a photo, video, or GIF.");
+      return;
+    }
+
+    // Upload to your storage (Supabase / S3 / whatever you defined)
+    const publicUrl = await uploadImage(buffer);
+
+    await setSetting("home_media_file_id", publicUrl);
+    await setSetting("home_media_type", mediaType!);
+
+    ctx.session.step = undefined;
+
+    await ctx.reply("✅ Home media updated successfully!");
+    await showToolsMenu(ctx);
+    return;
+  }
+
+  // =====================================================
+  // 🟡 PRODUCT FILE UPLOAD (CLEAN VERSION)
+  // =====================================================
+  const validSteps = [
+    "admin:add_product:content",
+    "admin:add_product:more_files",
+    "admin:add_product:bulk",
+  ];
+
+  if (!step || !validSteps.includes(step)) return;
+
+  const msg = ctx.message as any;
+
+  let buffer: Buffer | undefined;
+
+  try {
     if (msg.photo) {
-      fileId = msg.photo[msg.photo.length - 1].file_id;
-      fileType = "photo";
+      const file = msg.photo[msg.photo.length - 1];
+      const link = await ctx.telegram.getFileLink(file.file_id);
+      const res = await fetch(link.href);
+      buffer = Buffer.from(await res.arrayBuffer());
     } else if (msg.document) {
-      fileId = msg.document.file_id;
-      fileType = "document";
+      const link = await ctx.telegram.getFileLink(msg.document.file_id);
+      const res = await fetch(link.href);
+      buffer = Buffer.from(await res.arrayBuffer());
     } else if (msg.video) {
-      fileId = msg.video.file_id;
-      fileType = "video";
+      const link = await ctx.telegram.getFileLink(msg.video.file_id);
+      const res = await fetch(link.href);
+      buffer = Buffer.from(await res.arrayBuffer());
     } else if (msg.animation) {
-      fileId = msg.animation.file_id;
-      fileType = "animation";
+      const link = await ctx.telegram.getFileLink(msg.animation.file_id);
+      const res = await fetch(link.href);
+      buffer = Buffer.from(await res.arrayBuffer());
     } else {
       return;
     }
+  } catch (err) {
+    console.error(err);
+    await ctx.reply("❌ Failed to upload file.");
+    return;
+  }
 
+  if (!buffer) return;
+
+  const publicUrl = await uploadImage(buffer);
+
+  await ctx.reply("✅ File uploaded successfully!");
+}
     const { cityId, districtId, typeId, size, price, addedBy } = data;
     const workerData = await db
       .select()

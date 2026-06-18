@@ -30,19 +30,15 @@ import {
 import { count, eq } from "drizzle-orm";
 import type { Telegraf } from "telegraf";
 
-const rawPort = process.env["PORT"];
 
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
+const port = Number(process.env.PORT || 8080);
+
+app.listen(port, () => {
+  logger.info({ port }, "Server running");
+});
 
 const port = Number(rawPort);
 
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
 
 async function seedDefaults() {
   const [tierCount] = await db.select({ count: count() }).from(tierLevelsTable);
@@ -297,7 +293,7 @@ async function startBotWithFailover(): Promise<void> {
   logger.error("All bot tokens failed — no bot is running");
 }
 
-app.listen(port, async (err) => {
+const server = app.listen(port, async () => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);

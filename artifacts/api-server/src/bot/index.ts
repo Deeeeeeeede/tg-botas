@@ -987,8 +987,9 @@ export function createBot(token?: string): Telegraf {
       }
       return;
     }
+  });
 
-async function handleFileMessage(ctx: any) {
+  async function handleFileMessage(ctx: any) {
   const step = ctx.session.step as string | undefined;
   const data = (ctx.session.data ?? {}) as Record<string, any>;
 
@@ -1051,7 +1052,7 @@ async function handleFileMessage(ctx: any) {
   }
 
   // =====================================================
-  // 🟡 PRODUCT FILE UPLOAD (CLEAN VERSION)
+  // 🟡 PRODUCT FILE UPLOAD
   // =====================================================
   const validSteps = [
     "admin:add_product:content",
@@ -1063,41 +1064,25 @@ async function handleFileMessage(ctx: any) {
 
   const msg = ctx.message as any;
 
-  let buffer: Buffer | undefined;
+  let fileId: string | undefined;
+  let fileType: string | undefined;
 
-  try {
-    if (msg.photo) {
-      const file = msg.photo[msg.photo.length - 1];
-      const link = await ctx.telegram.getFileLink(file.file_id);
-      const res = await fetch(link.href);
-      buffer = Buffer.from(await res.arrayBuffer());
-    } else if (msg.document) {
-      const link = await ctx.telegram.getFileLink(msg.document.file_id);
-      const res = await fetch(link.href);
-      buffer = Buffer.from(await res.arrayBuffer());
-    } else if (msg.video) {
-      const link = await ctx.telegram.getFileLink(msg.video.file_id);
-      const res = await fetch(link.href);
-      buffer = Buffer.from(await res.arrayBuffer());
-    } else if (msg.animation) {
-      const link = await ctx.telegram.getFileLink(msg.animation.file_id);
-      const res = await fetch(link.href);
-      buffer = Buffer.from(await res.arrayBuffer());
-    } else {
-      return;
-    }
-  } catch (err) {
-    console.error(err);
-    await ctx.reply("❌ Failed to upload file.");
-    return;
+  if (msg?.photo?.length) {
+    fileId = msg.photo[msg.photo.length - 1].file_id;
+    fileType = "photo";
+  } else if (msg?.video) {
+    fileId = msg.video.file_id;
+    fileType = "video";
+  } else if (msg?.document) {
+    fileId = msg.document.file_id;
+    fileType = "document";
+  } else if (msg?.animation) {
+    fileId = msg.animation.file_id;
+    fileType = "animation";
   }
 
-  if (!buffer) return;
+  if (!fileId) return;
 
-  const publicUrl = await uploadImage(buffer);
-
-  await ctx.reply("✅ File uploaded successfully!");
-}
     const { cityId, districtId, typeId, size, price, addedBy } = data;
     const workerData = await db
       .select()
@@ -1217,21 +1202,21 @@ async function handleFileMessage(ctx: any) {
     }
   }
 
-bot.on(message("photo"), async (ctx) => {
-  await handleFileMessage(ctx);
-});
+  bot.on(message("photo"), async (ctx) => {
+    await handleFileMessage(ctx);
+  });
 
-bot.on(message("video"), async (ctx) => {
-  await handleFileMessage(ctx);
-});
+  bot.on(message("video"), async (ctx) => {
+    await handleFileMessage(ctx);
+  });
 
-bot.on(message("document"), async (ctx) => {
-  await handleFileMessage(ctx);
-});
+  bot.on(message("document"), async (ctx) => {
+    await handleFileMessage(ctx);
+  });
 
-bot.on(message("animation"), async (ctx) => {
-  await handleFileMessage(ctx);
-});
+  bot.on(message("animation"), async (ctx) => {
+    await handleFileMessage(ctx);
+  });
 
   bot.on("callback_query", async (ctx: any) => {
     const cbData: string = ctx.callbackQuery.data ?? "";
@@ -1452,12 +1437,6 @@ bot.on(message("animation"), async (ctx) => {
             inlineKeyboard([[BACK_BTN("prod:empty")]]),
           );
         }
-              return;
-    }
-  } catch (err) {
-    console.error(err);
-  }
-});
         if (sub === "type") {
           const typeId = parseInt(parts[1]!);
           return showExistingOrNewSizes(ctx, typeId);

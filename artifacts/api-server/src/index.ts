@@ -31,14 +31,17 @@ import { count, eq } from "drizzle-orm";
 import type { Telegraf } from "telegraf";
 
 
-const port = Number(process.env.PORT || 8080);
+const rawPort = process.env["PORT"];
 
-app.listen(port, () => {
-  logger.info({ port }, "Server running");
-});
+if (!rawPort) {
+  throw new Error("PORT environment variable is required but was not provided.");
+}
 
 const port = Number(rawPort);
 
+if (Number.isNaN(port) || port <= 0) {
+  throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
 
 async function seedDefaults() {
   const [tierCount] = await db.select({ count: count() }).from(tierLevelsTable);

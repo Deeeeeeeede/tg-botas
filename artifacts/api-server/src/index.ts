@@ -296,18 +296,23 @@ async function startBotWithFailover(): Promise<void> {
   logger.error("All bot tokens failed — no bot is running");
 }
 
-const server = app.listen(port, async () => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+const server = app.listen(port);
 
+server.on("error", (err) => {
+  logger.error({ err }, "Error listening on port");
+  process.exit(1);
+});
+
+server.on("listening", () => {
   logger.info({ port }, "Server listening");
 
-  await seedDefaults();
-
-  await startBotWithFailover();
-
-  process.once("SIGINT", () => activeBot?.stop("SIGINT"));
-  process.once("SIGTERM", () => activeBot?.stop("SIGTERM"));
+  seedDefaults()
+    .then(() => startBotWithFailover())
+    .catch((err) => {
+      logger.error({ err }, "Startup failed");
+      process.exit(1);
+    });
 });
+
+process.once("SIGINT", () => activeBot?.stop("SIGINT"));
+process.once("SIGTERM", () => activeBot?.stop("SIGTERM"));

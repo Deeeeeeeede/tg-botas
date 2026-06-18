@@ -1452,6 +1452,12 @@ bot.on(message("animation"), async (ctx) => {
             inlineKeyboard([[BACK_BTN("prod:empty")]]),
           );
         }
+              return;
+    }
+  } catch (err) {
+    console.error(err);
+  }
+});
         if (sub === "type") {
           const typeId = parseInt(parts[1]!);
           return showExistingOrNewSizes(ctx, typeId);

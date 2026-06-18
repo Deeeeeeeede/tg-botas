@@ -1217,10 +1217,21 @@ async function handleFileMessage(ctx: any) {
     }
   }
 
-  bot.on(message("photo"), handleFileMessage);
-  bot.on(message("document"), handleFileMessage);
-  bot.on(message("video"), handleFileMessage);
-  bot.on(message("animation"), handleFileMessage);
+bot.on(message("photo"), async (ctx) => {
+  await handleFileMessage(ctx);
+});
+
+bot.on(message("video"), async (ctx) => {
+  await handleFileMessage(ctx);
+});
+
+bot.on(message("document"), async (ctx) => {
+  await handleFileMessage(ctx);
+});
+
+bot.on(message("animation"), async (ctx) => {
+  await handleFileMessage(ctx);
+});
 
   bot.on("callback_query", async (ctx: any) => {
     const cbData: string = ctx.callbackQuery.data ?? "";

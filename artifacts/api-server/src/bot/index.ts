@@ -1019,6 +1019,48 @@ export function createBot(token?: string): Telegraf {
       }
       return;
     }
+
+    // Top-up amount entry: showTopUpMenu sets step='topup:enter_amount' but
+    // there was no text handler for it — amount was silently swallowed.
+    if (step === 'topup:enter_amount') {
+      await handleTopUpAmount(ctx, text);
+      return;
+    }
+
+    // Worker 'Add text': klad:add_text / workers:add_text set step='klad:add_text'
+    // but had no text handler — typed location/address text was never saved,
+    // so customers only received the photo with no text info.
+    if (step === 'klad:add_text') {
+      const productId = data['productId'] as number | undefined;
+      const backTo = data['backTo'] as string | undefined;
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      if (!productId) return;
+      const product = await db
+        .select()
+        .from(productsTable)
+        .where(eq(productsTable.id, productId))
+        .then((r) => r[0]);
+      if (!product) {
+        await ctx.reply('❌ Product not found.');
+        return;
+      }
+      const existing = product.mediaFiles
+        ? (JSON.parse(product.mediaFiles) as { fileId: string; fileType: string }[])
+        : [];
+      existing.push({ fileId: text.trim(), fileType: 'text' });
+      await db
+        .update(productsTable)
+        .set({ mediaFiles: JSON.stringify(existing) })
+        .where(eq(productsTable.id, productId));
+      await ctx.reply(
+        '✅ Text saved. It will be sent to the buyer alongside the photo.',
+        inlineKeyboard([[
+          { text: '⬅ Back', callback_data: backTo ?? 'klad:my_uploads' },
+        ]]),
+      );
+      return;
+    }
   });
 
   async function handleFileMessage(ctx: any) {

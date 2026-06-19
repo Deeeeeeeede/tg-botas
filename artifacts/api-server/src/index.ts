@@ -208,10 +208,26 @@ async function activateBot(
         );
 
         if (isConflict) {
-          logger.error(
-            { err, tokenIndex: meta.tokenIndex, restartCount, reason, errorCode },
-            "Bot polling failed due to 409 Conflict — stopping retries",
+          // 409 during a rolling deploy: the old container is still alive and
+          // polling the same token. Railway sends it SIGTERM and it drains in
+          // ~10-20 s. Retry with an increasing delay instead of giving up so
+          // the bot comes back as soon as the old instance stops.
+          if (restartCount > MAX_POLL_RESTARTS) {
+            logger.error(
+              { err, tokenIndex: meta.tokenIndex, restartCount, reason, errorCode },
+              "Bot polling 409 Conflict — stopping after max retries (is another permanent instance running?)",
+            );
+            return;
+          }
+          const conflictDelay = Math.min(15_000 * restartCount, 60_000);
+          logger.warn(
+            { err, tokenIndex: meta.tokenIndex, restartCount, reason, delay: conflictDelay },
+            "Bot polling 409 Conflict — another instance is still running, retrying after delay",
           );
+          const t = setTimeout(() => {
+            if (activeBot === bot && !failoverInProgress) launch();
+          }, conflictDelay);
+          t.unref?.();
           return;
         }
 

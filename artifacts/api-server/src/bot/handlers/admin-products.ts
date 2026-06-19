@@ -301,7 +301,7 @@ export async function deleteAllProducts(
   // Sold units are left untouched so purchase history and refunds stay intact.
   const result = await db
     .update(productsTable)
-    .set({ status: "unavailable" as any })
+    .set({ status: "unavailable" })
     .where(
       and(
         eq(productsTable.cityId, cityId),

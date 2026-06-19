@@ -1810,6 +1810,8 @@ export function createBot(token?: string): Telegraf {
           );
           const rows = await db
             .select({
+              typeEmoji: productTypesTable.emoji,
+              typeName: productTypesTable.name,
               size: productsTable.size,
               cnt: drizzleCount(),
               total: drizzleSum(purchasesTable.pricePaid),
@@ -1819,14 +1821,22 @@ export function createBot(token?: string): Telegraf {
               productsTable,
               eq(purchasesTable.productId, productsTable.id),
             )
+            .innerJoin(
+              productTypesTable,
+              eq(productsTable.typeId, productTypesTable.id),
+            )
             .where(eq(purchasesTable.refunded, false))
-            .groupBy(productsTable.size)
+            .groupBy(productTypesTable.id, productTypesTable.emoji, productTypesTable.name, productsTable.size)
             .orderBy(desc(drizzleCount()))
             .limit(10);
           let text = "🏆 <b>Top Products</b>\n\n";
-          rows.forEach((r, i) => {
-            text += `${i + 1}. ${r.size} — ${r.cnt} sales — ${formatEur(r.total ?? 0)}\n`;
-          });
+          if (rows.length === 0) {
+            text += "No sales yet.";
+          } else {
+            rows.forEach((r, i) => {
+              text += `${i + 1}. ${r.typeEmoji} <b>${r.typeName}</b> ${r.size} — ${r.cnt} sales — ${formatEur(r.total ?? 0)}\n`;
+            });
+          }
           return ctx.editMessageText(text, {
             parse_mode: "HTML",
             ...inlineKeyboard([[BACK_BTN("admin:analytics")]]),
@@ -2251,6 +2261,7 @@ export function createBot(token?: string): Telegraf {
           return ctx.answerCbQuery("Not authorized.", { show_alert: true });
         const sub = parts[0];
         if (sub === "exit") return showHome(ctx);
+        if (sub === "menu") return showKladMenu(ctx);
         if (sub === "upload") return showKladCities(ctx);
         if (sub === "city") return showKladDistricts(ctx, parseInt(parts[1]!));
         if (sub === "dist")
@@ -2335,7 +2346,7 @@ export function createBot(token?: string): Telegraf {
               parse_mode: "HTML",
               ...inlineKeyboard([
                 [{ text: "✅ Done", callback_data: "klad:done" }],
-                [{ text: "✖ Cancel", callback_data: "klad:exit" }],
+                [{ text: "⬅ Back to Menu", callback_data: "klad:menu" }],
               ]),
             },
           );

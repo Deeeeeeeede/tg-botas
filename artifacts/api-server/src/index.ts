@@ -1,23 +1,7 @@
-// Patch abort-controller's AbortSignal so node-fetch@2 accepts native Node.js AbortSignal instances
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { AbortSignal: ACAbortSignal } = require("abort-controller") as {
-    AbortSignal: { [Symbol.hasInstance]: unknown };
-  };
-  Object.defineProperty(ACAbortSignal, Symbol.hasInstance, {
-    configurable: true,
-    value(instance: unknown) {
-      if (instance == null) return false;
-      const i = instance as Record<string, unknown>;
-      // Check for AbortSignal duck-typing: aborted property + addEventListener method
-      // This handles both abort-controller and native Node.js AbortSignal
-      const hasAborted = typeof i["aborted"] === "boolean";
-      const hasAddEventListener = typeof i["addEventListener"] === "function";
-      const hasReason = "reason" in i; // Native AbortSignal has a 'reason' property
-      return (hasAborted && hasAddEventListener) || (hasAborted && hasReason);
-    },
-  });
-} catch {}
+// MUST be the very first import — patches abort-controller before Telegraf loads node-fetch.
+// ES module imports are hoisted, so inline patch code in this file runs too late.
+// See abort-signal-patch.ts for the full explanation.
+import "./abort-signal-patch";
 
 import app from "./app";
 import { logger } from "./lib/logger";

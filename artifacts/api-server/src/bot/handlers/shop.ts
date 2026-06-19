@@ -1277,22 +1277,6 @@ export async function showOrderContent(
   }
 }
 
-export async function showTopUp(ctx: Context & { session: BotSession }) {
-  const telegramId = ctx.from!.id;
-  const user = await getUser(telegramId);
-
-  const text =
-    `💰 <b>Top Up Balance</b>\n\n` +
-    `Current balance: <b>${formatEur(user?.balance ?? 0)}</b>\n\n` +
-    `To add funds, pay with crypto:\n\n` +
-    `◎ <b>Solana (SOL)</b> wallet:\n<code>HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59</code>\n\n` +
-    `Send any amount and contact admin with your Telegram ID (<code>${telegramId}</code>) for manual top-up confirmation.`;
-
-  await editOrReplace(ctx, text, {
-    parse_mode: "HTML",
-    ...inlineKeyboard([[BACK_BTN("shop:home")]]),
-  });
-}
 
 export async function showReviewsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;

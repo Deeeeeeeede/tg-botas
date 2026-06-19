@@ -453,8 +453,8 @@ export async function showKladMenu(ctx: Context & { session: BotSession }) {
 export async function showKladCities(ctx: Context & { session: BotSession }) {
   const cities = await getCities();
   if (cities.length === 0) {
-    await ctx.editMessageText("No locations available.", {
-      ...inlineKeyboard([[{ text: "✖ Exit", callback_data: "klad:exit" }]]),
+    await ctx.editMessageText("No locations available. Ask admin to add cities first.", {
+      ...inlineKeyboard([[BACK_BTN("klad:menu")]]),
     });
     return;
   }
@@ -462,7 +462,7 @@ export async function showKladCities(ctx: Context & { session: BotSession }) {
     ...cities.map((c) => [
       { text: c.name, callback_data: `klad:city:${c.id}` },
     ]),
-    [{ text: "✖ Cancel", callback_data: "klad:exit" }],
+    [BACK_BTN("klad:menu")],
   ]);
   if (ctx.callbackQuery) {
     await ctx.editMessageText("📍 Select city:", { ...kb });
@@ -576,8 +576,16 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
     user ?? { username: null, telegramId: userId },
   );
   const products = await db
-    .select()
+    .select({
+      id: productsTable.id,
+      size: productsTable.size,
+      price: productsTable.price,
+      createdAt: productsTable.createdAt,
+      typeName: productTypesTable.name,
+      typeEmoji: productTypesTable.emoji,
+    })
     .from(productsTable)
+    .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
     .where(
       and(
         eq(productsTable.workerTag, tag),
@@ -589,7 +597,7 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
 
   if (products.length === 0) {
     await ctx.editMessageText("You have no available uploads.", {
-      ...inlineKeyboard([[{ text: "✖ Exit", callback_data: "klad:exit" }]]),
+      ...inlineKeyboard([[BACK_BTN("klad:menu")]]),
     });
     return;
   }
@@ -597,11 +605,11 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
   const kb = inlineKeyboard([
     ...products.map((p) => [
       {
-        text: `📦 ${p.size} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
+        text: `📦 ${p.typeEmoji} ${p.typeName} ${p.size} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
         callback_data: `klad:view_upload:${p.id}`,
       },
     ]),
-    [{ text: "✖ Exit", callback_data: "klad:exit" }],
+    [BACK_BTN("klad:menu")],
   ]);
   await ctx.editMessageText("📋 <b>My Uploads</b> (tap to view):", {
     parse_mode: "HTML",

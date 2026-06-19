@@ -69,16 +69,12 @@ export async function getSolWallet(): Promise<string> {
   if (solWalletCache && now - solWalletCacheTs < 30_000) {
     return solWalletCache;
   }
-  // Priority: SOL_WALLET env var → DB setting → hardcoded default
-  const envWallet = process.env["SOL_WALLET"];
-  if (envWallet) {
-    solWalletCache = envWallet;
-    solWalletCacheTs = now;
-    return envWallet;
-  }
+  // Priority: DB setting (admin tools) → SOL_WALLET env var → hardcoded default.
+  // DB wins so the admin can change the wallet from the bot without redeploying.
   const { getSetting } = await import("../db");
   const saved = await getSetting("sol_wallet");
-  const wallet = saved || DEFAULT_SOL_WALLET;
+  const envWallet = process.env["SOL_WALLET"];
+  const wallet = saved || envWallet || DEFAULT_SOL_WALLET;
   solWalletCache = wallet;
   solWalletCacheTs = now;
   return wallet;

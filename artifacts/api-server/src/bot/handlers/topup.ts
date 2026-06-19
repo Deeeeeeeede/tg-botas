@@ -68,6 +68,11 @@ export async function handleTopUpAmount(
   const solAmount = makeUniqueSolAmount(eurAmount / solPrice);
   const expiresAt = addMinutes(new Date(), INVOICE_MINUTES);
 
+  // Cancel any running background checker for the user's previous invoice
+  // before we create a new one. Without this the old ticker keeps scanning
+  // for the old SOL amount even after the DB record is marked expired.
+  cancelPendingInvoice(telegramId);
+
   await db
     .update(topupInvoicesTable)
     .set({ status: "expired" })

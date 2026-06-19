@@ -74,6 +74,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      abort-controller:
+        specifier: ^3.0.0
+        version: 3.0.0
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7

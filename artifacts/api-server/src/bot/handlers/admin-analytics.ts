@@ -7,6 +7,7 @@ import {
   usersTable,
   citiesTable,
   productTypesTable,
+  productSlotsTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, count, sum, avg, desc, sql } from "drizzle-orm";
 import { ANALYTICS_KB, inlineKeyboard, BACK_BTN } from "../keyboards";
@@ -141,25 +142,76 @@ export async function generateReport(
 }
 
 export async function salesByCity(ctx: Context & { session: BotSession }) {
-  const rows = await db
+  // Sales per city (only cities with purchases appear here)
+  const salesRows = await db
     .select({
+      cityId: citiesTable.id,
       cityName: citiesTable.name,
-      count: count(),
+      orders: count(purchasesTable.id),
       total: sum(purchasesTable.pricePaid),
     })
-    .from(purchasesTable)
-    .innerJoin(productsTable, eq(purchasesTable.productId, productsTable.id))
-    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
-    .where(eq(purchasesTable.refunded, false))
-    .groupBy(citiesTable.name)
+    .from(citiesTable)
+    .leftJoin(productsTable, eq(productsTable.cityId, citiesTable.id))
+    .leftJoin(
+      purchasesTable,
+      and(
+        eq(purchasesTable.productId, productsTable.id),
+        eq(purchasesTable.refunded, false),
+      ),
+    )
+    .groupBy(citiesTable.id, citiesTable.name)
     .orderBy(desc(sum(purchasesTable.pricePaid)));
 
+  // Available product slots per city — shows which sizes are listed
+  const slotRows = await db
+    .select({
+      cityId: productSlotsTable.cityId,
+      typeName: productTypesTable.name,
+      typeEmoji: productTypesTable.emoji,
+      size: productSlotsTable.size,
+    })
+    .from(productSlotsTable)
+    .innerJoin(productTypesTable, eq(productSlotsTable.typeId, productTypesTable.id))
+    .orderBy(productSlotsTable.cityId);
+
+  // Available real stock per city
+  const stockRows = await db
+    .select({
+      cityId: productsTable.cityId,
+      cnt: count(),
+    })
+    .from(productsTable)
+    .where(eq(productsTable.status, "available"))
+    .groupBy(productsTable.cityId);
+
+  const stockMap = new Map<number, number>();
+  for (const s of stockRows) {
+    if (s.cityId !== null) stockMap.set(s.cityId, s.cnt);
+  }
+
+  // Group slot info by city
+  const slotMap = new Map<number, string[]>();
+  for (const s of slotRows) {
+    const key = s.cityId;
+    if (!slotMap.has(key)) slotMap.set(key, []);
+    slotMap.get(key)!.push(`${s.typeEmoji} ${s.typeName} ${s.size}`);
+  }
+
   let text = "🌍 <b>Sales by City</b>\n\n";
-  if (rows.length === 0) {
-    text += "No sales yet.";
+  if (salesRows.length === 0) {
+    text += "No cities found.";
   } else {
-    for (const row of rows) {
-      text += `🏙 <b>${row.cityName}</b>: ${row.count} orders — ${formatEur(row.total ?? 0)}\n`;
+    for (const row of salesRows) {
+      const inStock = stockMap.get(row.cityId) ?? 0;
+      text += `🏙 <b>${row.cityName}</b>: ${row.orders} orders — ${formatEur(row.total ?? 0)}\n`;
+      text += `   📦 In stock: ${inStock} units\n`;
+      const slots = slotMap.get(row.cityId);
+      if (slots && slots.length > 0) {
+        // Deduplicate and list available sizes
+        const unique = [...new Set(slots)];
+        text += `   📋 Listings: ${unique.join(", ")}\n`;
+      }
+      text += "\n";
     }
   }
   await ctx.editMessageText(text, {

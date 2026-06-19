@@ -1,7 +1,7 @@
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 
 export function generateQueueId(): string {
-  return uuidv4().replace(/-/g, "").substring(0, 12).toUpperCase();
+  return randomUUID().replace(/-/g, "").substring(0, 12).toUpperCase();
 }
 
 export function formatEur(amount: number | string): string {

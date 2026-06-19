@@ -1046,6 +1046,7 @@ export function createBot(token?: string): Telegraf {
       await db.insert(reviewsTable).values({
         userId: ctx.from.id,
         username: ctx.from.username ?? null,
+        firstName: ctx.from.first_name ?? null,
         text: reviewText,
       });
       await ctx.reply(

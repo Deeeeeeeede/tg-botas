@@ -21,7 +21,45 @@ import { getUser, getUserBasket, releaseBasket, updateUserTier } from "../db";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
 
 const DEFAULT_SOL_WALLET = "HtbWwMXAMJ6jT5meYGJ1hcV1JRarGKoJa8hTz36zCL59";
-const SOL_RPC = "https://api.mainnet-beta.solana.com";
+
+// Multiple public RPC endpoints tried in order — if one is rate-limited or
+// unreachable the next is used automatically. Free cloud IPs often get 429s
+// from mainnet-beta, so having fallbacks is critical on Railway.
+const SOL_RPCS = [
+  process.env["SOL_RPC"] ?? "https://api.mainnet-beta.solana.com",
+  "https://rpc.ankr.com/solana",
+  "https://solana.publicnode.com",
+];
+
+// Send a JSON-RPC call to the Solana network, trying each endpoint in order.
+// Throws only when all endpoints fail or time out.
+async function solRpcFetch(body: object, timeoutMs = 12000): Promise<any> {
+  let lastErr: unknown;
+  for (const rpc of SOL_RPCS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(rpc, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      // 429 = rate limited — try next endpoint
+      if (res.status === 429) continue;
+      const data = (await res.json()) as any;
+      // Solana RPC rate-limit error code
+      if (data?.error?.code === -32005 || data?.error?.code === 429) continue;
+      return data;
+    } catch (err) {
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr ?? new Error("All Solana RPC endpoints failed");
+}
 
 let solWalletCache: string | null = null;
 let solWalletCacheTs = 0;
@@ -30,6 +68,13 @@ export async function getSolWallet(): Promise<string> {
   const now = Date.now();
   if (solWalletCache && now - solWalletCacheTs < 30_000) {
     return solWalletCache;
+  }
+  // Priority: SOL_WALLET env var → DB setting → hardcoded default
+  const envWallet = process.env["SOL_WALLET"];
+  if (envWallet) {
+    solWalletCache = envWallet;
+    solWalletCacheTs = now;
+    return envWallet;
   }
   const { getSetting } = await import("../db");
   const saved = await getSetting("sol_wallet");
@@ -203,42 +248,26 @@ export async function fetchInboundPayments(
   limit = 40,
 ): Promise<InboundPayment[]> {
   const wallet = await getSolWallet();
-  const sigCtrl = new AbortController();
-  const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
-  const sigRes = await fetch(SOL_RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getSignaturesForAddress",
-      params: [wallet, { limit }],
-    }),
-    signal: sigCtrl.signal,
-  }).finally(() => clearTimeout(sigTimer));
-  const sigData = (await sigRes.json()) as any;
+  const sigData = await solRpcFetch({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "getSignaturesForAddress",
+    params: [wallet, { limit }],
+  });
   const signatures: any[] = sigData?.result ?? [];
 
   const out: InboundPayment[] = [];
   for (const sig of signatures) {
     if (sig.err) continue;
-    const txCtrl = new AbortController();
-    const txTimer = setTimeout(() => txCtrl.abort(), 12000);
-    const txRes = await fetch(SOL_RPC, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getTransaction",
-        params: [
-          sig.signature,
-          { encoding: "json", maxSupportedTransactionVersion: 0 },
-        ],
-      }),
-      signal: txCtrl.signal,
-    }).finally(() => clearTimeout(txTimer));
-    const txData = (await txRes.json()) as any;
+    const txData = await solRpcFetch({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTransaction",
+      params: [
+        sig.signature,
+        { encoding: "json", maxSupportedTransactionVersion: 0 },
+      ],
+    });
     const tx = txData?.result;
     if (!tx) continue;
     const accountKeys: string[] = tx.transaction?.message?.accountKeys ?? [];
@@ -891,9 +920,9 @@ export async function getSolPrice(): Promise<number> {
     const solUsdt = (await solUsdtRes.json()) as any;
     const usdtEur = (await usdtEurRes.json()) as any;
     const solPriceUsdt = Number(solUsdt?.price ?? 0);
-    const eurPriceUsdt = Number(usdtEur?.price ?? 0);
+    const eurPriceUsdt = Number(usdtEur?.price ?? 0); // EURUSDT = how many USDT per 1 EUR
     if (solPriceUsdt > 0 && eurPriceUsdt > 0) {
-      const price = solPriceUsdt * eurPriceUsdt;
+      const price = solPriceUsdt / eurPriceUsdt; // SOL_USDT / (USDT_per_EUR) = SOL in EUR
       cachedSolPrice = price;
       cachedSolPriceTs = Date.now();
       return price;
@@ -1049,43 +1078,27 @@ export async function scanForPayment(
 } | null> {
   const allowFuzzy = opts?.allowFuzzy ?? false;
   const wallet = await getSolWallet();
-  const sigCtrl = new AbortController();
-  const sigTimer = setTimeout(() => sigCtrl.abort(), 12000);
-  const sigRes = await fetch(SOL_RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getSignaturesForAddress",
-      params: [wallet, { limit: 25 }],
-    }),
-    signal: sigCtrl.signal,
-  }).finally(() => clearTimeout(sigTimer));
-  const sigData = (await sigRes.json()) as any;
+  const sigData = await solRpcFetch({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "getSignaturesForAddress",
+    params: [wallet, { limit: 25 }],
+  });
   const signatures: any[] = sigData?.result ?? [];
 
   for (const sig of signatures) {
     if (sig.err) continue;
     if (sig.blockTime && sig.blockTime * 1000 < createdAt - 60000) continue;
 
-    const txCtrl = new AbortController();
-    const txTimer = setTimeout(() => txCtrl.abort(), 12000);
-    const txRes = await fetch(SOL_RPC, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getTransaction",
-        params: [
-          sig.signature,
-          { encoding: "json", maxSupportedTransactionVersion: 0 },
-        ],
-      }),
-      signal: txCtrl.signal,
-    }).finally(() => clearTimeout(txTimer));
-    const txData = (await txRes.json()) as any;
+    const txData = await solRpcFetch({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTransaction",
+      params: [
+        sig.signature,
+        { encoding: "json", maxSupportedTransactionVersion: 0 },
+      ],
+    });
     const tx = txData?.result;
     if (!tx) continue;
 

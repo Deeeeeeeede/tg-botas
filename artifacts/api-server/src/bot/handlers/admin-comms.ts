@@ -6,7 +6,7 @@ import {
   welcomeTemplatesTable,
   reviewsTable,
 } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, count } from "drizzle-orm";
 import {
   COMMS_KB,
   inlineKeyboard,
@@ -118,7 +118,7 @@ export async function showReviews(ctx: Context & { session: BotSession }, page =
   ]);
 
   const [totalRow] = await db
-    .select({ count: require("drizzle-orm").count() })
+    .select({ count: count() })
     .from(reviewsTable);
   const total = (totalRow as any)?.count ?? 0;
   const navRow: { text: string; callback_data: string }[] = [];

@@ -288,6 +288,37 @@ export function createBot(token?: string): Telegraf {
     await restorePanevezys(ctx);
   });
 
+  bot.command("status", async (ctx: any) => {
+    if (!(await isAdmin(ctx.from.id))) {
+      return ctx.reply("❌ You are not authorized to use this command.");
+    }
+    const uptimeSec = Math.floor(process.uptime());
+    const h = Math.floor(uptimeSec / 3600);
+    const m = Math.floor((uptimeSec % 3600) / 60);
+    const s = uptimeSec % 60;
+    const uptimeStr = `${h}h ${m}m ${s}s`;
+    const memMb = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
+    let dbStatus = "✅ Connected";
+    try {
+      await db.execute(sql`SELECT 1`);
+    } catch {
+      dbStatus = "❌ Error";
+    }
+    const supabaseConfigured =
+      process.env["SUPABASE_URL"] && process.env["SUPABASE_KEY"]
+        ? "✅ Configured"
+        : "⚠️ Not configured";
+    await ctx.reply(
+      `🤖 <b>Bot Status</b>\n\n` +
+        `⏱ Uptime: <code>${uptimeStr}</code>\n` +
+        `💾 Memory: <code>${memMb} MB</code>\n` +
+        `🗄 Database: ${dbStatus}\n` +
+        `🖼 Supabase: ${supabaseConfigured}\n` +
+        `🌍 NODE_ENV: <code>${process.env["NODE_ENV"] ?? "unset"}</code>`,
+      { parse_mode: "HTML" },
+    );
+  });
+
   bot.command("klad", async (ctx: any) => {
     if (!(await isWorker(ctx.from.id))) {
       if (await isAdmin(ctx.from.id)) {

@@ -1139,7 +1139,7 @@ export function createBot(token?: string): Telegraf {
         const link = await ctx.telegram.getFileLink(msg.document.file_id);
         const res = await fetch(link.href);
         buffer = Buffer.from(await res.arrayBuffer());
-        mediaType = "photo";
+        mediaType = "document";
       }
     } catch (err) {
       console.error(err);

@@ -1359,8 +1359,8 @@ async function notifyAdminsOfPurchase(
       })
       .from(productsTable)
       .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
-      .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
-      .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+      .leftJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+      .leftJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
       .where(eq(productsTable.id, p.productId));
 
     const header =

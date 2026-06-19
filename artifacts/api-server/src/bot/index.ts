@@ -1001,22 +1001,26 @@ export function createBot(token?: string): Telegraf {
 
     if (step === "admin:add_backup_token") {
       const tokenVal = text.trim();
-      // Validate the token with Telegram before saving
-      try {
-        const testBot = new Telegraf(tokenVal);
-        const me = await testBot.telegram.getMe();
-        await db
-          .insert(backupTokensTable)
-          .values({ token: tokenVal })
-          .onConflictDoNothing();
-        ctx.session.step = undefined;
-        await ctx.reply(`✅ Backup token saved — @${me.username}`);
-        await showBackupTokens(ctx);
-      } catch {
+      // Telegram bot tokens always look like  1234567890:ABCDefGhijKLMnop…
+      // Validate the format locally so network hiccups can't falsely reject a
+      // valid token. The failover system validates for real when it activates.
+      const isValidFormat = /^\d{8,12}:[A-Za-z0-9_-]{35,}$/.test(tokenVal);
+      if (!isValidFormat) {
         await ctx.reply(
-          "❌ That token is invalid or Telegram rejected it. Please check it and try again, or press Back.",
+          "❌ That doesn't look like a valid bot token. Bot tokens look like:\n" +
+          "<code>1234567890:ABCDefGhijKLMnopQRSTUvwxyz123</code>\n\n" +
+          "Copy it exactly from BotFather and try again.",
+          { parse_mode: "HTML" },
         );
+        return;
       }
+      ctx.session.step = undefined;
+      await db
+        .insert(backupTokensTable)
+        .values({ token: tokenVal })
+        .onConflictDoNothing();
+      await ctx.reply("✅ Backup token saved. It will be used automatically if the main token stops working.");
+      await showBackupTokens(ctx);
       return;
     }
 
@@ -2044,8 +2048,11 @@ export function createBot(token?: string): Telegraf {
         if (sub === "add_token") {
           ctx.session.step = "admin:add_backup_token";
           return ctx.editMessageText(
-            "Send the backup bot token:",
-            inlineKeyboard([[BACK_BTN("admin:tools")]]),
+            "🔑 <b>Add Backup Token</b>\n\nPaste the backup bot token (from BotFather). It will activate automatically if the main token ever stops working.",
+            {
+              parse_mode: "HTML",
+              ...inlineKeyboard([[BACK_BTN("tools:backup_tokens")]]),
+            },
           );
         }
         if (sub === "add_balance") {

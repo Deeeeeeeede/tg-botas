@@ -273,8 +273,8 @@ export async function sendWorkerUploadContent(
   const [row] = await db
     .select(UPLOAD_CONTENT_COLUMNS)
     .from(productsTable)
-    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
-    .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+    .leftJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .leftJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
     .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
     .where(eq(productsTable.id, productId));
 
@@ -328,8 +328,8 @@ export async function showKladUploadDetail(
   const [row] = await db
     .select(UPLOAD_CONTENT_COLUMNS)
     .from(productsTable)
-    .innerJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
-    .innerJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
+    .leftJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .leftJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
     .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
     .where(eq(productsTable.id, productId));
 
@@ -391,7 +391,7 @@ export async function deleteKladUpload(
   // the row stays in the database.
   const result = await db
     .update(productsTable)
-    .set({ status: "unavailable" as any })
+    .set({ status: "unavailable" })
     .where(
       and(
         eq(productsTable.id, productId),

@@ -222,6 +222,7 @@ export const reviewsTable = pgTable("bot_reviews", {
   id: serial("id").primaryKey(),
   userId: bigint("user_id", { mode: "number" }).notNull(),
   username: text("username"),
+  firstName: text("first_name"),
   text: text("text").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

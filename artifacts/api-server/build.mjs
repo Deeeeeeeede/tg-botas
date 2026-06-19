@@ -28,6 +28,10 @@ async function buildAll() {
     // - uses native modules and loads them dynamically (e.g. sharp)
     // - use path traversal to read files (e.g. @google-cloud/secret-manager loads sibling .proto files)
     external: [
+      // abort-controller must be external so our runtime patch (abort-signal-patch.ts)
+      // affects the same module instance that Telegraf's node-fetch loads via require().
+      // If it were inlined by esbuild the patch would have no effect on the bundle copy.
+      "abort-controller",
       "*.node",
       "sharp",
       "better-sqlite3",

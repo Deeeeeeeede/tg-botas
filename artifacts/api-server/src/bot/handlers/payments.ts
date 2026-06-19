@@ -520,12 +520,20 @@ type InvoiceMatch = { kind: "purchase" | "topup"; id: number; userId: number };
 // All unfulfilled invoices (purchase intents + topups) whose SOL amount matches
 // `amount` within tolerance, were created before the payment, and are within the
 // lookback window. Used to attribute an orphaned payment to a buyer.
+//
+// We use ACCEPT_TOL (not the tight MATCH_TOL) in BOTH directions so that:
+//   - Underpayments (buyer sent less than invoice): intent.solAmount is HIGHER
+//     than received, up to ACCEPT_TOL above → lo stays tight, hi widens.
+//   - Overpayments (buyer sent more than invoice): intent.solAmount is LOWER
+//     than received, up to ACCEPT_TOL below → lo widens, hi stays tight.
+// Without this, a buyer who sent a rounded/wrong amount would have their payment
+// stuck in the wallet forever with no credit to their balance.
 async function findInvoiceMatches(
   amount: number,
   paymentTimeMs: number,
 ): Promise<InvoiceMatch[]> {
-  const lo = (amount - MATCH_TOL).toFixed(9);
-  const hi = (amount + MATCH_TOL).toFixed(9);
+  const lo = (amount - ACCEPT_TOL).toFixed(9); // covers overpayments
+  const hi = (amount + ACCEPT_TOL).toFixed(9); // covers underpayments
   const since = new Date(paymentTimeMs - INTENT_LOOKBACK_MS);
   const before = new Date(paymentTimeMs + 60000); // small clock slack
 

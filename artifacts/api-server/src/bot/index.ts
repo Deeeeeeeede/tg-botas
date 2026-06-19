@@ -305,7 +305,8 @@ export function createBot(token?: string): Telegraf {
       dbStatus = "❌ Error";
     }
     const supabaseConfigured =
-      process.env["SUPABASE_URL"] && process.env["SUPABASE_KEY"]
+      (process.env["SUPABASE_URL"] ?? process.env["NEXT_PUBLIC_SUPABASE_URL"]) &&
+      (process.env["SUPABASE_KEY"] ?? process.env["SUPABASE_SECRET_KEY"] ?? process.env["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"])
         ? "✅ Configured"
         : "⚠️ Not configured";
     await ctx.reply(

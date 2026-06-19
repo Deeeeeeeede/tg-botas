@@ -24,6 +24,7 @@ export const productStatusEnum = pgEnum("product_status", [
   "available",
   "reserved",
   "sold",
+  "unavailable",
 ]);
 
 export const tierMetricEnum = pgEnum("tier_metric", [

@@ -147,7 +147,7 @@ export async function confirmDeleteCity(
   // can't browse them without a city).
   await db
     .update(productsTable)
-    .set({ cityId: null, districtId: null, status: "unavailable" as any })
+    .set({ cityId: null, districtId: null, status: "unavailable" })
     .where(eq(productsTable.cityId, cityId));
   await db.delete(productSlotsTable).where(eq(productSlotsTable.cityId, cityId));
   await db.delete(districtsTable).where(eq(districtsTable.cityId, cityId));
@@ -286,7 +286,7 @@ export async function confirmDeleteDistrict(
   // removed because they only define *where* a product is offered.
   await db
     .update(productsTable)
-    .set({ districtId: null, status: "unavailable" as any })
+    .set({ districtId: null, status: "unavailable" })
     .where(eq(productsTable.districtId, districtId));
   await db
     .delete(productSlotsTable)

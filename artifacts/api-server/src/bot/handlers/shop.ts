@@ -1316,6 +1316,7 @@ export async function showCustomerReviews(
       text: reviewsTable.text,
       createdAt: reviewsTable.createdAt,
       username: reviewsTable.username,
+      firstName: reviewsTable.firstName,
     })
     .from(reviewsTable)
     .orderBy(desc(reviewsTable.createdAt))
@@ -1337,7 +1338,7 @@ export async function showCustomerReviews(
 
   let text = `👁 <b>Customer Reviews</b>\n\n`;
   for (const r of reviews) {
-    const who = r.username ? `@${r.username}` : "Customer";
+    const who = r.username ? `@${r.username}` : (r.firstName ?? "Customer");
     text += `⭐ <b>${who}</b>\n${r.text}\n\n`;
   }
 

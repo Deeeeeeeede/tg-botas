@@ -1658,7 +1658,7 @@ export function createBot(token?: string): Telegraf {
           // removed this way; sold units are already protected.
           await db
             .update(productsTable)
-            .set({ status: "unavailable" as any })
+            .set({ status: "unavailable" })
             .where(
               and(
                 eq(productsTable.id, productId),

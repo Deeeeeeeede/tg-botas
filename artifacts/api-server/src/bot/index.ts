@@ -1020,7 +1020,42 @@ export function createBot(token?: string): Telegraf {
       return;
     }
 
-    // Top-up amount entry: showTopUpMenu sets step='topup:enter_amount' but
+    // Discount code entry for pay-now flow
+    if (step === 'shop:apply_code_paynow') {
+      ctx.session.step = undefined;
+      await applyDiscountCode(ctx, text, 'paynow');
+      return;
+    }
+
+    // Discount code entry for basket/checkout flow
+    if (step === 'shop:apply_code_basket') {
+      ctx.session.step = undefined;
+      await applyDiscountCode(ctx, text, 'basket');
+      return;
+    }
+
+    // Customer review submission
+    if (step === 'shop:review') {
+      ctx.session.step = undefined;
+      const reviewText = text.trim();
+      if (!reviewText || reviewText.length < 3) {
+        await ctx.reply('Please write at least a few words for your review:');
+        ctx.session.step = 'shop:review';
+        return;
+      }
+      await db.insert(reviewsTable).values({
+        userId: ctx.from.id,
+        username: ctx.from.username ?? null,
+        text: reviewText,
+      });
+      await ctx.reply(
+        '⭐ Thank you for your review!',
+        inlineKeyboard([[{ text: '🏠 Home', callback_data: 'shop:home' }]]),
+      );
+      return;
+    }
+
+        // Top-up amount entry: showTopUpMenu sets step='topup:enter_amount' but
     // there was no text handler for it — amount was silently swallowed.
     if (step === 'topup:enter_amount') {
       await handleTopUpAmount(ctx, text);
@@ -1294,7 +1329,6 @@ export function createBot(token?: string): Telegraf {
 
   bot.on("callback_query", async (ctx: any) => {
     const cbData: string = ctx.callbackQuery.data ?? "";
-    await ctx.answerCbQuery().catch(() => {});
     const [action, ...parts] = cbData.split(":");
 
     try {
@@ -2371,6 +2405,9 @@ export function createBot(token?: string): Telegraf {
       logger.error({ err }, "Error handling callback query");
       await ctx.reply("An error occurred. Please try again.").catch(() => {});
     }
+    // Fallback: dismisses the Telegram spinner for routes that never call
+    // ctx.answerCbQuery() themselves. Has no effect if already answered.
+    await ctx.answerCbQuery().catch(() => {});
   });
 
   bot.catch((err: any) => {

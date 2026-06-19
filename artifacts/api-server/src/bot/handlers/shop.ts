@@ -1310,15 +1310,19 @@ export async function showReviewsMenu(ctx: Context & { session: BotSession }) {
 export async function showCustomerReviews(
   ctx: Context & { session: BotSession }
 ) {
+  // Join with usersTable to get the current/live username for each reviewer.
+  // This ensures the @ handle is always up-to-date even if the user changed
+  // their Telegram username after leaving the review.
   const reviews = await db
     .select({
       id: reviewsTable.id,
       text: reviewsTable.text,
       createdAt: reviewsTable.createdAt,
-      username: reviewsTable.username,
-      firstName: reviewsTable.firstName,
+      username: usersTable.username,
+      firstName: usersTable.firstName,
     })
     .from(reviewsTable)
+    .leftJoin(usersTable, eq(usersTable.telegramId, reviewsTable.userId))
     .orderBy(desc(reviewsTable.createdAt))
     .limit(20);
 
@@ -1338,7 +1342,11 @@ export async function showCustomerReviews(
 
   let text = `👁 <b>Customer Reviews</b>\n\n`;
   for (const r of reviews) {
-    const who = r.username ? `@${r.username}` : (r.firstName ?? "Customer");
+    // Always display with @ prefix: use @username if available, else @FirstName.
+    // This preserves the tagging style that old reviews had.
+    const who = r.username
+      ? `@${r.username}`
+      : `@${r.firstName ?? "Customer"}`;
     text += `⭐ <b>${who}</b>\n${r.text}\n\n`;
   }
 

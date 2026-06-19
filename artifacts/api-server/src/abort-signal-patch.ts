@@ -23,6 +23,22 @@
  * Telegraf's node-fetch will receive the same, already-patched instance.
  */
 
+// ── WebSocket polyfill for Node.js 18 ─────────────────────────────────────
+// Node.js native WebSocket only exists in v21+. Supabase JS client tries to
+// use globalThis.WebSocket for its realtime transport and crashes on Node 18.
+// We polyfill it with the 'ws' package before any other module loads.
+try {
+  if (typeof globalThis.WebSocket === "undefined") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ws = require("ws") as { WebSocket: typeof WebSocket };
+    // @ts-expect-error polyfill
+    globalThis.WebSocket = ws.WebSocket ?? ws;
+  }
+} catch {
+  // ws not installed — Supabase realtime will not work, storage still works.
+}
+
+// ── AbortSignal patch ──────────────────────────────────────────────────────
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ac = require("abort-controller") as {

@@ -141,17 +141,22 @@ export async function confirmDeleteCity(
     return;
   }
 
-  // Orphan uploaded products so they survive city deletion. Slots are removed
-  // because they only define *where* a product is offered; actual products are
-  // preserved (they become unavailable once the city is gone since customers
-  // can't browse them without a city).
-  await db
-    .update(productsTable)
-    .set({ cityId: null, districtId: null, status: "unavailable" })
-    .where(eq(productsTable.cityId, cityId));
-  await db.delete(productSlotsTable).where(eq(productSlotsTable.cityId, cityId));
-  await db.delete(districtsTable).where(eq(districtsTable.cityId, cityId));
-  await db.delete(citiesTable).where(eq(citiesTable.id, cityId));
+  // Wrap all deletions in a transaction so a mid-flight failure can't leave
+  // the database partially cleaned up (e.g. city row deleted but product rows
+  // still pointing at the now-missing city).
+  await db.transaction(async (tx) => {
+    // Orphan uploaded products so they survive city deletion. Slots are removed
+    // because they only define *where* a product is offered; actual products are
+    // preserved (they become unavailable once the city is gone since customers
+    // can't browse them without a city).
+    await tx
+      .update(productsTable)
+      .set({ cityId: null, districtId: null, status: "unavailable" })
+      .where(eq(productsTable.cityId, cityId));
+    await tx.delete(productSlotsTable).where(eq(productSlotsTable.cityId, cityId));
+    await tx.delete(districtsTable).where(eq(districtsTable.cityId, cityId));
+    await tx.delete(citiesTable).where(eq(citiesTable.id, cityId));
+  });
 
   await ctx.answerCbQuery(`✅ City "${city.name}" deleted. Uploaded products preserved (now orphaned).`, { show_alert: true });
   await showCitiesList(ctx);
@@ -282,16 +287,20 @@ export async function confirmDeleteDistrict(
     return;
   }
 
-  // Orphan uploaded products so they survive district deletion. Slots are
-  // removed because they only define *where* a product is offered.
-  await db
-    .update(productsTable)
-    .set({ districtId: null, status: "unavailable" })
-    .where(eq(productsTable.districtId, districtId));
-  await db
-    .delete(productSlotsTable)
-    .where(eq(productSlotsTable.districtId, districtId));
-  await db.delete(districtsTable).where(eq(districtsTable.id, districtId));
+  // Wrap all deletions in a transaction so a mid-flight failure can't leave
+  // the database partially cleaned up.
+  await db.transaction(async (tx) => {
+    // Orphan uploaded products so they survive district deletion. Slots are
+    // removed because they only define *where* a product is offered.
+    await tx
+      .update(productsTable)
+      .set({ districtId: null, status: "unavailable" })
+      .where(eq(productsTable.districtId, districtId));
+    await tx
+      .delete(productSlotsTable)
+      .where(eq(productSlotsTable.districtId, districtId));
+    await tx.delete(districtsTable).where(eq(districtsTable.id, districtId));
+  });
 
   await ctx.answerCbQuery(`✅ District "${district.name}" deleted. Uploaded products preserved (now orphaned).`, { show_alert: true });
   await showDistrictsList(ctx, cityId);

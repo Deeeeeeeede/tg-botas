@@ -30,9 +30,15 @@ export async function showGeographyMenu(ctx: Context & { session: BotSession }) 
 export async function showCitiesList(ctx: Context & { session: BotSession }) {
   const cities = await getCities();
   if (cities.length === 0) {
-    await ctx.editMessageText("No cities yet. Add one first.", {
-      ...inlineKeyboard([[BACK_BTN("admin:geography")]]),
-    });
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText("No cities yet. Add one first.", {
+        ...inlineKeyboard([[BACK_BTN("admin:geography")]]),
+      });
+    } else {
+      await ctx.reply("No cities yet. Add one first.", {
+        ...inlineKeyboard([[BACK_BTN("admin:geography")]]),
+      });
+    }
     return;
   }
   const kb = inlineKeyboard([
@@ -41,10 +47,17 @@ export async function showCitiesList(ctx: Context & { session: BotSession }) {
     ]),
     [BACK_BTN("admin:geography")],
   ]);
-  await ctx.editMessageText("🏙 <b>Cities</b>\nTap a city to rename or delete.", {
-    parse_mode: "HTML",
-    ...kb,
-  });
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText("🏙 <b>Cities</b>\nTap a city to rename or delete.", {
+      parse_mode: "HTML",
+      ...kb,
+    });
+  } else {
+    await ctx.reply("🏙 <b>Cities</b>\nTap a city to rename or delete.", {
+      parse_mode: "HTML",
+      ...kb,
+    });
+  }
 }
 
 export async function showCityDetail(
@@ -180,10 +193,17 @@ export async function showDistrictsList(
     [{ text: "➕ Add District", callback_data: `geo:add_dist:${cityId}` }],
     [BACK_BTN("geo:districts_select")],
   ]);
-  await ctx.editMessageText(
-    `📍 Districts in <b>${city?.name ?? "?"}</b>:`,
-    { parse_mode: "HTML", ...kb }
-  );
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(
+      `📍 Districts in <b>${city?.name ?? "?"}</b>:`,
+      { parse_mode: "HTML", ...kb }
+    );
+  } else {
+    await ctx.reply(
+      `📍 Districts in <b>${city?.name ?? "?"}</b>:`,
+      { parse_mode: "HTML", ...kb }
+    );
+  }
 }
 
 export async function showDistrictDetail(

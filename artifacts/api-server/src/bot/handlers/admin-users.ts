@@ -31,6 +31,10 @@ export async function showUserProfile(
   ctx: Context & { session: BotSession },
   query: string
 ) {
+  // Clear any pending text-input step so navigating to a profile doesn't
+  // leave a stale step active that would swallow the admin's next message.
+  ctx.session.step = undefined;
+  ctx.session.data = undefined;
   const user = await searchUser(query);
   if (!user) {
     if (ctx.callbackQuery) {

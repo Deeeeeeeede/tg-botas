@@ -128,12 +128,11 @@ async function buildInvoiceText(eurAmount: number, solAmount: number): Promise<s
     `🧾 <b>Top-Up Invoice</b>\n\n` +
     `💶 Amount: <b>${formatEur(eurAmount)}</b>\n` +
     `────────────────────────\n` +
-    `Send exactly:\n<code>${solAmount}</code> SOL\n\n` +
+    `Send approximately:\n<code>${solAmount}</code> SOL\n\n` +
     `To address:\n<code>${wallet}</code>\n` +
     `────────────────────────\n` +
-    `⚠️ <b>SEND THE EXACT AMOUNT</b> ⚠️\n` +
-    `<b>‼️ SIŲSKITE TIKSLIĄ SUMĄ ‼️</b>\n` +
-    `We can only match your payment if the amount is exactly <code>${solAmount}</code> SOL.\n` +
+    `ℹ️ Send as close to <code>${solAmount}</code> SOL as possible.\n` +
+    `Minor differences (e.g. rounding) are accepted — you will be credited for what you actually send.\n` +
     `✅ Press <b>Check Payment</b> after sending.`
   );
 }
@@ -190,7 +189,7 @@ export async function checkTopUpPayment(
     ?.message_id;
 
   try {
-    const hit = await scanForPayment(expectedSol, createdAtMs);
+    const hit = await scanForPayment(expectedSol, createdAtMs, { allowFuzzy: true });
     if (hit) {
       const credited = await creditTopupInvoice(
         ctx.telegram,
@@ -329,6 +328,7 @@ export async function autoConfirmTopupInvoice(
   const hit = await scanForPayment(
     Number(invoice.solAmount),
     invoice.createdAt.getTime(),
+    { allowFuzzy: true },
   );
   if (!hit) return false;
   return creditTopupInvoice(

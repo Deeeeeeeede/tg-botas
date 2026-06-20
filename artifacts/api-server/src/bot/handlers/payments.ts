@@ -618,8 +618,8 @@ const ACCEPT_TOL = 0.02;
 
 // Decide whether an incoming `receivedSol` should be accepted for an invoice
 // expecting `expectedSol`, using the live in-memory invoices to stay unambiguous.
-// Used for PURCHASES only (top-ups still match exactly). Over/under-payment is
-// sorted out by the caller after acceptance.
+// Used for both purchases and top-ups when allowFuzzy is true. Over/under-payment
+// is sorted out by the caller after acceptance.
 function acceptsPayment(receivedSol: number, expectedSol: number): boolean {
   // Exact tier: each live invoice has a guaranteed-unique amount, so a tight
   // match is always unambiguous and safe.
@@ -1115,11 +1115,10 @@ export async function scanForPayment(
     const receivedSol = (post - pre) / LAMPORTS_PER_SOL;
 
     // Each invoice has a guaranteed-unique amount (makeUniqueSolAmount), so a
-    // tight match binds a payment to one specific order. For purchases we ALSO
-    // accept non-exact amounts (rounded/over/under) via acceptsPayment, but only
-    // when the payment can belong to exactly ONE in-flight invoice — this still
+    // tight match binds a payment to one specific order. When allowFuzzy is true
+    // we ALSO accept non-exact amounts (rounded/over/under) via acceptsPayment,
+    // but only when the payment belongs to exactly ONE in-flight invoice — this
     // prevents one buyer's payment from satisfying a different buyer's invoice.
-    // Top-ups keep the tight match (allowFuzzy is off).
     const accepted = allowFuzzy
       ? acceptsPayment(receivedSol, expectedSol)
       : Math.abs(receivedSol - expectedSol) <= MATCH_TOL;

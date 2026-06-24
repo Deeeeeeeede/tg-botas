@@ -255,9 +255,13 @@ export function createBot(token?: string): Telegraf {
 
   bot.use(async (ctx: any, next) => {
     if (!ctx.from) return next();
-    const user = await getOrCreateUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
     ctx.state = ctx.state ?? {};
-    ctx.state.user = user;
+    try {
+      ctx.state.user = await getOrCreateUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+    } catch (err) {
+      logger.error({ err, telegramId: ctx.from.id }, "Failed to get or create user — continuing without DB user");
+      ctx.state.user = null;
+    }
     return next();
   });
 

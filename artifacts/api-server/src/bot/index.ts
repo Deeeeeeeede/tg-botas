@@ -1180,19 +1180,43 @@ export function createBot(token?: string): Telegraf {
 
   let fileId: string | undefined;
   let fileType: string | undefined;
+  let rawTelegramFileId: string | undefined;
 
   if (msg?.photo?.length) {
-    fileId = msg.photo[msg.photo.length - 1].file_id;
+    rawTelegramFileId = msg.photo[msg.photo.length - 1].file_id;
     fileType = "photo";
   } else if (msg?.video) {
-    fileId = msg.video.file_id;
+    rawTelegramFileId = msg.video.file_id;
     fileType = "video";
   } else if (msg?.document) {
-    fileId = msg.document.file_id;
+    rawTelegramFileId = msg.document.file_id;
     fileType = "document";
   } else if (msg?.animation) {
-    fileId = msg.animation.file_id;
+    rawTelegramFileId = msg.animation.file_id;
     fileType = "animation";
+  }
+
+  if (!rawTelegramFileId) return;
+
+  // Upload to Supabase so the URL is permanent and survives bot token changes.
+  // Telegram file_ids are bot-specific: they break if the bot is deleted and
+  // recreated with a new token. Storing the Supabase public URL instead means
+  // product files are always accessible regardless of which token is in use.
+  try {
+    const link = await ctx.telegram.getFileLink(rawTelegramFileId);
+    const res = await fetch(link.href);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    fileId = await uploadImage(buffer);
+    // Mark text-delivery mode: when fileId is a URL we store a synthetic
+    // fileType of "url:<original>" so delivery code can handle it correctly.
+    // But keeping the original fileType is fine — delivery already reads
+    // Supabase URLs as file_id and passes them to sendPhoto etc, which
+    // Telegram accepts as a URL when the string starts with "http".
+  } catch (err) {
+    logger.error({ err }, "Failed to upload product file to Supabase; falling back to Telegram file_id");
+    // Fallback: store the raw Telegram file_id. This still breaks on token
+    // change but is better than losing the upload entirely.
+    fileId = rawTelegramFileId;
   }
 
   if (!fileId) return;

@@ -302,6 +302,10 @@ export async function sendWorkerUploadContent(
             text: row.content ? "✏️ Edit text" : "📝 Add text",
             callback_data: `workers:add_text:${productId}`,
           },
+          {
+            text: "📸 Add Photo",
+            callback_data: `workers:add_photo:${productId}`,
+          },
         ],
       ]),
     );
@@ -355,6 +359,10 @@ export async function showKladUploadDetail(
       {
         text: row.content ? "✏️ Edit text" : "📝 Add text",
         callback_data: `klad:add_text:${productId}`,
+      },
+      {
+        text: "📸 Add Photo",
+        callback_data: `klad:add_photo:${productId}`,
       },
     ]);
     controls.push([

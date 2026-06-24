@@ -1172,6 +1172,7 @@ export function createBot(token?: string): Telegraf {
     "admin:add_product:content",
     "admin:add_product:more_files",
     "admin:add_product:bulk",
+    "klad:add_photo",
   ];
 
   if (!step || !validSteps.includes(step)) return;
@@ -1336,6 +1337,38 @@ export function createBot(token?: string): Telegraf {
       await ctx.reply(
         `✅ Unit ${bulkCount} added. Send another file or press Done to finish.`,
         inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
+      );
+    } else if (step === "klad:add_photo") {
+      // Add a photo to an existing product (used to re-attach photos after
+      // a bot token rotation wiped the old Telegram file_ids).
+      const productId = data["productId"] as number | undefined;
+      const backTo = data["backTo"] as string | undefined;
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      if (!productId) return;
+      const product = await db
+        .select()
+        .from(productsTable)
+        .where(eq(productsTable.id, productId))
+        .then((r) => r[0]);
+      if (!product) {
+        await ctx.reply("❌ Product not found.");
+        return;
+      }
+      const existing = product.mediaFiles
+        ? (JSON.parse(product.mediaFiles) as { fileId: string; fileType: string }[])
+        : [];
+      existing.push({ fileId, fileType: fileType! });
+      if ((msg as any).caption) existing.push({ fileId: (msg as any).caption, fileType: "text" });
+      await db
+        .update(productsTable)
+        .set({ mediaFiles: JSON.stringify(existing) })
+        .where(eq(productsTable.id, productId));
+      await ctx.reply(
+        "✅ Photo added successfully!",
+        inlineKeyboard([[
+          { text: "⬅ Back", callback_data: backTo ?? "klad:my_uploads" },
+        ]]),
       );
     }
   }
@@ -2149,6 +2182,18 @@ export function createBot(token?: string): Telegraf {
             ]),
           );
         }
+        if (sub === "add_photo") {
+          const productId = parseInt(parts[1]!);
+          ctx.session.step = "klad:add_photo";
+          ctx.session.data = { productId, backTo: `workers:upload:${productId}` };
+          await ctx.answerCbQuery();
+          return ctx.reply(
+            "📸 Send the photo/video/document you want to add to this product.\n\nSend /terminate to cancel.",
+            inlineKeyboard([
+              [{ text: "✖ Cancel", callback_data: `workers:upload:${productId}` }],
+            ]),
+          );
+        }
         if (sub === "enable")
           return toggleWorker(ctx, parseInt(parts[1]!), true);
         if (sub === "disable")
@@ -2412,6 +2457,18 @@ export function createBot(token?: string): Telegraf {
           await ctx.answerCbQuery();
           return ctx.reply(
             "📝 Type the location or address text for this product.\n\nIt will be sent to the buyer alongside the photo.",
+            inlineKeyboard([
+              [{ text: "✖ Cancel", callback_data: `klad:view_upload:${productId}` }],
+            ]),
+          );
+        }
+        if (sub === "add_photo") {
+          const productId = parseInt(parts[1]!);
+          ctx.session.step = "klad:add_photo";
+          ctx.session.data = { productId, backTo: `klad:view_upload:${productId}` };
+          await ctx.answerCbQuery();
+          return ctx.reply(
+            "📸 Send the photo/video/document you want to add to this product.\n\nSend /terminate to cancel.",
             inlineKeyboard([
               [{ text: "✖ Cancel", callback_data: `klad:view_upload:${productId}` }],
             ]),

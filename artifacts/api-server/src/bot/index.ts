@@ -1164,7 +1164,7 @@ export function createBot(token?: string): Telegraf {
     }
 
     // Upload to your storage (Supabase / S3 / whatever you defined)
-    const publicUrl = await uploadImage(buffer);
+    const publicUrl = await uploadImage(buffer, { fileType: mediaType });
 
     await setSetting("home_media_file_id", publicUrl);
     await setSetting("home_media_type", mediaType!);
@@ -1194,18 +1194,23 @@ export function createBot(token?: string): Telegraf {
   let fileType: string | undefined;
   let rawTelegramFileId: string | undefined;
 
+  let fileMimeType: string | undefined;
+
   if (msg?.photo?.length) {
     rawTelegramFileId = msg.photo[msg.photo.length - 1].file_id;
     fileType = "photo";
   } else if (msg?.video) {
     rawTelegramFileId = msg.video.file_id;
     fileType = "video";
+    fileMimeType = msg.video.mime_type ?? "video/mp4";
   } else if (msg?.document) {
     rawTelegramFileId = msg.document.file_id;
     fileType = "document";
+    fileMimeType = msg.document.mime_type;
   } else if (msg?.animation) {
     rawTelegramFileId = msg.animation.file_id;
     fileType = "animation";
+    fileMimeType = "video/mp4";
   }
 
   if (!rawTelegramFileId) return;
@@ -1218,7 +1223,7 @@ export function createBot(token?: string): Telegraf {
     const link = await ctx.telegram.getFileLink(rawTelegramFileId);
     const res = await fetch(link.href);
     const buffer = Buffer.from(await res.arrayBuffer());
-    fileId = await uploadImage(buffer);
+    fileId = await uploadImage(buffer, { fileType, mimeType: fileMimeType });
     // Mark text-delivery mode: when fileId is a URL we store a synthetic
     // fileType of "url:<original>" so delivery code can handle it correctly.
     // But keeping the original fileType is fine — delivery already reads

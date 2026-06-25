@@ -55,6 +55,10 @@ export async function showToolsMenu(ctx: Context & { session: BotSession }) {
     [{ text: "↩ Product Refund", callback_data: "tools:refund" }],
     [{ text: "🔑 Backup Tokens", callback_data: "tools:backup_tokens" }],
     [{ text: "➕ Add Balance to User", callback_data: "tools:add_balance" }],
+    [
+      { text: "➖ Remove Balance", callback_data: "tools:remove_balance" },
+      { text: "✏️ Set Balance", callback_data: "tools:set_balance" },
+    ],
     [{ text: "🪙 Change SOL Wallet", callback_data: "tools:change_wallet" }],
     [notifyBtn],
     [jobToggleBtn, { text: "✏️ Edit Job Text", callback_data: "tools:job_text" }],

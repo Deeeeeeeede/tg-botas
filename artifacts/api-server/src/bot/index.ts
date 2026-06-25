@@ -238,6 +238,62 @@ async function applyAddBalance(
   return newBal;
 }
 
+// Set a user's balance to a fixed absolute value and notify them.
+async function applySetBalance(
+  telegram: Telegraf["telegram"],
+  targetId: number,
+  newAmount: number,
+): Promise<number | null> {
+  const user = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, targetId))
+    .then((r) => r[0]);
+  if (!user) return null;
+  const [updated] = await db
+    .update(usersTable)
+    .set({ balance: String(newAmount.toFixed(2)) })
+    .where(eq(usersTable.telegramId, targetId))
+    .returning({ balance: usersTable.balance });
+  const newBal = Number(updated?.balance ?? 0);
+  try {
+    await telegram.sendMessage(
+      targetId,
+      `💰 Your balance has been updated to ${formatEur(newBal)} by an admin.`,
+    );
+  } catch {}
+  await refreshAdminLiveStatsNow();
+  return newBal;
+}
+
+// Subtract an amount from a user's balance (floors at 0) and notify them.
+async function applyRemoveBalance(
+  telegram: Telegraf["telegram"],
+  targetId: number,
+  amount: number,
+): Promise<number | null> {
+  const user = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.telegramId, targetId))
+    .then((r) => r[0]);
+  if (!user) return null;
+  const [updated] = await db
+    .update(usersTable)
+    .set({ balance: sql`GREATEST(0, ${usersTable.balance} - ${amount})` })
+    .where(eq(usersTable.telegramId, targetId))
+    .returning({ balance: usersTable.balance });
+  const newBal = Number(updated?.balance ?? 0);
+  try {
+    await telegram.sendMessage(
+      targetId,
+      `💰 ${formatEur(amount)} has been removed from your balance by an admin. New balance: ${formatEur(newBal)}.`,
+    );
+  } catch {}
+  await refreshAdminLiveStatsNow();
+  return newBal;
+}
+
 export function createBot(token?: string): Telegraf {
   const botToken = token ?? process.env["BOT_TOKEN"];
   if (!botToken) throw new Error("BOT_TOKEN environment variable is required");
@@ -883,6 +939,59 @@ export function createBot(token?: string): Telegraf {
                 callback_data: `tools:confirm_add_balance:${targetId}:${amount.toFixed(2)}`,
               },
             ],
+            [BACK_BTN("admin:tools")],
+          ]),
+        },
+      );
+      return;
+    }
+
+    if (step === "admin:remove_balance") {
+      if (!(await isAdmin(ctx.from.id))) return;
+      const [idStr, amtStr] = text.trim().split(" ");
+      const targetId = Number(idStr);
+      const amount = parseFloat(amtStr ?? "");
+      if (isNaN(targetId) || isNaN(amount) || amount < 0) {
+        return ctx.reply("Usage: <telegram_id> <amount>\nExample: 123456789 25.00\nUse 0 to clear all balance.");
+      }
+      const user = await db.select().from(usersTable).where(eq(usersTable.telegramId, targetId)).then((r) => r[0]);
+      if (!user) return ctx.reply("User not found.");
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      const currentBal = Number(user.balance);
+      const removed = Math.min(amount, currentBal);
+      const newBal = Math.max(0, currentBal - amount);
+      await ctx.reply(
+        `⚠️ <b>Confirm Remove Balance</b>\n\nUser: <code>${targetId}</code>\nCurrent: <b>${formatEur(currentBal)}</b>\nRemove: <b>${formatEur(removed)}</b>\nNew balance: <b>${formatEur(newBal)}</b>`,
+        {
+          parse_mode: "HTML",
+          ...inlineKeyboard([
+            [{ text: "✅ Confirm", callback_data: `tools:confirm_remove_balance:${targetId}:${amount.toFixed(2)}` }],
+            [BACK_BTN("admin:tools")],
+          ]),
+        },
+      );
+      return;
+    }
+
+    if (step === "admin:set_balance") {
+      if (!(await isAdmin(ctx.from.id))) return;
+      const [idStr, amtStr] = text.trim().split(" ");
+      const targetId = Number(idStr);
+      const amount = parseFloat(amtStr ?? "");
+      if (isNaN(targetId) || isNaN(amount) || amount < 0) {
+        return ctx.reply("Usage: <telegram_id> <amount>\nExample: 123456789 100.00\nUse 0 to clear completely.");
+      }
+      const user = await db.select().from(usersTable).where(eq(usersTable.telegramId, targetId)).then((r) => r[0]);
+      if (!user) return ctx.reply("User not found.");
+      ctx.session.step = undefined;
+      ctx.session.data = undefined;
+      await ctx.reply(
+        `⚠️ <b>Confirm Set Balance</b>\n\nUser: <code>${targetId}</code>\nCurrent: <b>${formatEur(Number(user.balance))}</b>\nSet to: <b>${formatEur(amount)}</b>`,
+        {
+          parse_mode: "HTML",
+          ...inlineKeyboard([
+            [{ text: "✅ Confirm", callback_data: `tools:confirm_set_balance:${targetId}:${amount.toFixed(2)}` }],
             [BACK_BTN("admin:tools")],
           ]),
         },
@@ -2144,6 +2253,56 @@ export function createBot(token?: string): Telegraf {
             "Enter <telegram_id> <amount> (e.g. 123456789 50.00):",
             inlineKeyboard([[BACK_BTN("admin:tools")]]),
           );
+        }
+        if (sub === "remove_balance") {
+          ctx.session.step = "admin:remove_balance";
+          return ctx.editMessageText(
+            "➖ <b>Remove Balance</b>\n\nEnter <code>&lt;telegram_id&gt; &lt;amount&gt;</code>\nExample: <code>123456789 25.00</code>\n\nTo clear balance completely, use the full amount or send <code>&lt;id&gt; 9999</code>.",
+            { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("admin:tools")]]) },
+          );
+        }
+        if (sub === "confirm_remove_balance") {
+          const targetId = parseInt(parts[1]!);
+          const amount = parseFloat(parts[2]!);
+          if (isNaN(targetId) || isNaN(amount)) {
+            await ctx.answerCbQuery("Invalid data.", { show_alert: true });
+            return showToolsMenu(ctx);
+          }
+          const newBal = await applyRemoveBalance(bot.telegram, targetId, amount);
+          if (newBal === null) {
+            await ctx.answerCbQuery("User not found.", { show_alert: true });
+            return showToolsMenu(ctx);
+          }
+          await ctx.editMessageText(
+            `✅ Removed ${formatEur(amount)} from user <code>${targetId}</code>. New balance: <b>${formatEur(newBal)}</b>.`,
+            { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("admin:tools")]]) },
+          );
+          return;
+        }
+        if (sub === "set_balance") {
+          ctx.session.step = "admin:set_balance";
+          return ctx.editMessageText(
+            "✏️ <b>Set Balance</b>\n\nEnter <code>&lt;telegram_id&gt; &lt;amount&gt;</code> to set an exact balance.\nExample: <code>123456789 100.00</code>\n\nUse <code>0</code> to clear completely.",
+            { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("admin:tools")]]) },
+          );
+        }
+        if (sub === "confirm_set_balance") {
+          const targetId = parseInt(parts[1]!);
+          const amount = parseFloat(parts[2]!);
+          if (isNaN(targetId) || isNaN(amount) || amount < 0) {
+            await ctx.answerCbQuery("Invalid data.", { show_alert: true });
+            return showToolsMenu(ctx);
+          }
+          const newBal = await applySetBalance(bot.telegram, targetId, amount);
+          if (newBal === null) {
+            await ctx.answerCbQuery("User not found.", { show_alert: true });
+            return showToolsMenu(ctx);
+          }
+          await ctx.editMessageText(
+            `✅ Balance for user <code>${targetId}</code> set to <b>${formatEur(newBal)}</b>.`,
+            { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("admin:tools")]]) },
+          );
+          return;
         }
         if (sub === "change_wallet") return showChangeWallet(ctx);
         if (sub === "reset_wallet") return resetWalletToDefault(ctx);

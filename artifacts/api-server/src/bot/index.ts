@@ -457,6 +457,17 @@ export function createBot(token?: string): Telegraf {
       return;
     }
 
+    if (step === "admin:set_job_text") {
+      if (!(await isAdmin(ctx.from.id))) return;
+      ctx.session.step = undefined;
+      await setSetting("job_button_text", text.trim());
+      await ctx.reply(
+        "✅ Job button text updated! Users will now see this when they tap \"Noriu čia dirbti\".",
+        inlineKeyboard([[{ text: "⬅ Back to Tools", callback_data: "admin:tools" }]]),
+      );
+      return;
+    }
+
     if (step === "eprod:new_type_name") {
       ctx.session.data = { ...data, eprodNewTypeName: text.trim() };
       ctx.session.step = "eprod:new_type_emoji";
@@ -2147,6 +2158,25 @@ export function createBot(token?: string): Telegraf {
           return showToolsMenu(ctx);
         }
         if (sub === "toggle_notify") return toggleAdminNotifications(ctx);
+        if (sub === "job_toggle") {
+          const current = await getSetting("job_button_enabled");
+          const next = current === "1" ? "0" : "1";
+          await setSetting("job_button_enabled", next);
+          await ctx.answerCbQuery(
+            next === "1" ? "💼 Job button turned ON" : "💼 Job button turned OFF",
+            { show_alert: true },
+          );
+          return showToolsMenu(ctx);
+        }
+        if (sub === "job_text") {
+          ctx.session.step = "admin:set_job_text";
+          await ctx.answerCbQuery();
+          const current = await getSetting("job_button_text");
+          return ctx.reply(
+            `✏️ <b>Edit Job Button Text</b>\n\nCurrent text:\n<i>${current ?? "(none)"}</i>\n\nSend the new text to display when someone taps the "Noriu čia dirbti" button. You can use formatting, links, contacts — anything. Send /terminate to cancel.`,
+            { parse_mode: "HTML", ...inlineKeyboard([[{ text: "✖ Cancel", callback_data: "admin:tools" }]]) },
+          );
+        }
         return;
       }
 
@@ -2205,6 +2235,14 @@ export function createBot(token?: string): Telegraf {
       if (action === "shop") {
         const sub = parts[0];
         if (sub === "home") return showHome(ctx);
+        if (sub === "job") {
+          const jobText = await getSetting("job_button_text");
+          await ctx.answerCbQuery();
+          return ctx.reply(
+            jobText || "ℹ️ No information available yet. Please check back later.",
+            { parse_mode: "HTML", ...inlineKeyboard([[BACK_BTN("shop:home")]]) },
+          );
+        }
         if (sub === "profile") return showProfile(ctx);
         if (sub === "pricelist") return showPriceList(ctx);
         if (sub === "cities") return showShopCities(ctx);

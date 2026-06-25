@@ -59,12 +59,14 @@ export async function showHome(ctx: Context & { session: BotSession }) {
   }
 
   // Basket count joined into the same Promise.all — was a sequential await before.
-  const [welcomeText, homeMediaFileId, homeMediaType, reviewCount, basketCount] = await Promise.all([
+  const [welcomeText, homeMediaFileId, homeMediaType, reviewCount, basketCount, jobEnabled, jobText] = await Promise.all([
     getWelcomeText(),
     getSetting("home_media_file_id"),
     getSetting("home_media_type"),
     db.select({ count: count() }).from(reviewsTable).then((r) => r[0]?.count ?? 0),
     db.select({ count: count() }).from(basketsTable).where(eq(basketsTable.userId, telegramId)).then((r) => r[0]?.count ?? 0),
+    getSetting("job_button_enabled"),
+    getSetting("job_button_text"),
   ]);
 
   const tierEmoji = TIER_EMOJI[user.tierName] ?? "🏅";
@@ -78,7 +80,7 @@ export async function showHome(ctx: Context & { session: BotSession }) {
     `${welcomeText}\n\n` +
     `⚠️ <b>Note: No refunds.</b>`;
 
-  const kb = inlineKeyboard([
+  const homeRows: { text: string; callback_data: string }[][] = [
     [{ text: "🛒 Shop", callback_data: "shop:cities" }],
     [
       { text: "👤 Profile", callback_data: "shop:profile" },
@@ -88,7 +90,11 @@ export async function showHome(ctx: Context & { session: BotSession }) {
       { text: `📝 Reviews (${reviewCount})`, callback_data: "shop:reviews_menu" },
       { text: "📋 Price List", callback_data: "shop:pricelist" },
     ],
-  ]);
+  ];
+  if (jobEnabled === "1") {
+    homeRows.push([{ text: "💼 Noriu čia dirbti", callback_data: "shop:job" }]);
+  }
+  const kb = inlineKeyboard(homeRows);
 
   if (homeMediaFileId) {
     if (ctx.callbackQuery) {

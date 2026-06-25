@@ -29,16 +29,22 @@ export async function showToolsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.data = undefined;
 
   const adminId = ctx.from!.id;
-  const adminRow = await db
-    .select({ notifyOnPurchase: adminsTable.notifyOnPurchase })
-    .from(adminsTable)
-    .where(eq(adminsTable.telegramId, adminId))
-    .then((r) => r[0]);
+  const [adminRow, jobEnabled] = await Promise.all([
+    db.select({ notifyOnPurchase: adminsTable.notifyOnPurchase })
+      .from(adminsTable)
+      .where(eq(adminsTable.telegramId, adminId))
+      .then((r) => r[0]),
+    getSetting("job_button_enabled"),
+  ]);
   const notifyOn = adminRow?.notifyOnPurchase ?? true;
 
   const notifyBtn = notifyOn
     ? { text: "🔔 Sale Notifications: ON", callback_data: "tools:toggle_notify" }
     : { text: "🔕 Sale Notifications: OFF", callback_data: "tools:toggle_notify" };
+
+  const jobToggleBtn = jobEnabled === "1"
+    ? { text: "💼 Job Button: ON", callback_data: "tools:job_toggle" }
+    : { text: "💼 Job Button: OFF", callback_data: "tools:job_toggle" };
 
   const kb = inlineKeyboard([
     [{ text: "🖼 Set Bot Media", callback_data: "tools:set_media" }],
@@ -51,6 +57,7 @@ export async function showToolsMenu(ctx: Context & { session: BotSession }) {
     [{ text: "➕ Add Balance to User", callback_data: "tools:add_balance" }],
     [{ text: "🪙 Change SOL Wallet", callback_data: "tools:change_wallet" }],
     [notifyBtn],
+    [jobToggleBtn, { text: "✏️ Edit Job Text", callback_data: "tools:job_text" }],
     [BACK_BTN("admin:main")],
   ]);
 

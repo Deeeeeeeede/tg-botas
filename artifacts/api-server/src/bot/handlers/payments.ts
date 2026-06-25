@@ -1620,11 +1620,18 @@ export async function finalizePurchase(
   notifyAdminsOfPurchase(telegram, user, productsById, purchased).catch(() => {});
 
   await telegram
-    .sendMessage(chatId, "Thank you for your purchase! 🙏", {
-      reply_markup: {
-        inline_keyboard: [[{ text: "🏠 Home", callback_data: "shop:home" }]],
+    .sendMessage(
+      chatId,
+      "Ačiū už pirkinį! 🙏\n\nPrašome palikti atsiliepimą — tai labai padeda mums! 💬",
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "📝 Palikti atsiliepimą", callback_data: "shop:review_prompt" }],
+            [{ text: "🏠 Home", callback_data: "shop:home" }],
+          ],
+        },
       },
-    })
+    )
     .catch(() => {});
 }
 

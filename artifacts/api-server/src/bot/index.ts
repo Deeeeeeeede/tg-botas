@@ -357,11 +357,7 @@ export function createBot(token?: string): Telegraf {
     if (!user) return;
     if (!user.marketingOptIn) {
       return ctx.reply(
-        "You are already unsubscribed from announcements.
-
-You will still receive order confirmations and payment updates.
-
-To re-subscribe:",
+        `You are already unsubscribed from announcements.\n\nYou will still receive order confirmations and payment updates.\n\nTo re-subscribe:`,
         {
           ...inlineKeyboard([[{ text: "📣 Re-subscribe", callback_data: "settings:marketing_on" }]]),
         },
@@ -372,13 +368,7 @@ To re-subscribe:",
       .set({ marketingOptIn: false })
       .where(eq(usersTable.telegramId, ctx.from.id));
     await ctx.reply(
-      "✅ <b>Unsubscribed from broadcasts</b>
-
-You will no longer receive announcement messages.
-
-Order confirmations and payment updates are not affected.
-
-To re-subscribe at any time:",
+      `✅ <b>Unsubscribed from broadcasts</b>\n\nYou will no longer receive announcement messages.\n\nOrder confirmations and payment updates are not affected.\n\nTo re-subscribe at any time:`,
       {
         parse_mode: "HTML",
         ...inlineKeyboard([[{ text: "📣 Re-subscribe", callback_data: "settings:marketing_on" }]]),

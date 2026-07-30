@@ -7,7 +7,7 @@ import {
   citiesTable,
   districtsTable,
 } from "@workspace/db";
-import { eq, inArray, count, asc, sql } from "drizzle-orm";
+import { eq, inArray, count, asc, sql, and, or } from "drizzle-orm";
 import { getCities, getProductTypes } from "../db";
 import { inlineKeyboard, BACK_BTN } from "../keyboards";
 import { formatEur } from "../utils";
@@ -378,7 +378,7 @@ export async function createEmptyProductSlots(
     .from(districtsTable)
     .where(inArray(districtsTable.id, districtIds));
 
-  const rows = [];
+  const rows: { cityId: number; districtId: number; typeId: number; size: string; price: string }[] = [];
   for (const d of districts) {
     for (const s of sizes) {
       rows.push({
@@ -391,34 +391,58 @@ export async function createEmptyProductSlots(
     }
   }
 
-  let created = 0;
+  // Check which (city, district, type, size) combos already exist so we can
+  // skip them instead of silently overwriting prices or creating duplicates.
+  const existingKeys = new Set<string>();
   if (rows.length > 0) {
+    const existing = await db
+      .select({
+        cityId: productSlotsTable.cityId,
+        districtId: productSlotsTable.districtId,
+        size: productSlotsTable.size,
+      })
+      .from(productSlotsTable)
+      .where(
+        and(
+          eq(productSlotsTable.typeId, typeId),
+          inArray(productSlotsTable.districtId, districtIds),
+        ),
+      );
+    for (const e of existing) {
+      existingKeys.add(`${e.cityId}:${e.districtId}:${e.size}`);
+    }
+  }
+
+  const newRows = rows.filter(
+    (r) => !existingKeys.has(`${r.cityId}:${r.districtId}:${r.size}`),
+  );
+  const skipped = rows.length - newRows.length;
+
+  let created = 0;
+  if (newRows.length > 0) {
     const inserted = await db
       .insert(productSlotsTable)
-      .values(rows)
-      .onConflictDoUpdate({
-        target: [
-          productSlotsTable.cityId,
-          productSlotsTable.districtId,
-          productSlotsTable.typeId,
-          productSlotsTable.size,
-        ],
-        set: { price: sql`excluded.price` },
-      })
+      .values(newRows)
+      .onConflictDoNothing()
       .returning({ id: productSlotsTable.id });
     created = inserted.length;
   }
 
   ctx.session.step = undefined;
   ctx.session.data = undefined;
+
+  const summaryLines: string[] = [];
+  if (created > 0) summaryLines.push(`✅ <b>${created}</b> new slot(s) created.`);
+  if (skipped > 0) summaryLines.push(`⏭ <b>${skipped}</b> already existed and were skipped.`);
+  if (created === 0 && skipped === 0) summaryLines.push("Nothing to create.");
+
   const kb = inlineKeyboard([
     [{ text: "🆕 Add to more cities", callback_data: `eprod:add_more:${typeId}:${encodeSlotSizes(sizes)}` }],
     [{ text: "🆕 Add Another product", callback_data: "prod:empty" }],
     [BACK_BTN("admin:products")],
   ]);
   await ctx.editMessageText(
-    `✅ Created/updated <b>${created}</b> catalog slot(s).\n\n` +
-      `Workers can now upload stock for these via /klad.`,
+    summaryLines.join("\n") + (created > 0 ? `\n\nWorkers can now upload stock for these via /klad.` : ""),
     { parse_mode: "HTML", ...kb },
   );
 }

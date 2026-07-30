@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shop Bot — How It Works</title>
+<style>
+@page { size: A4; margin: 20mm 18mm; }
+* { box-sizing: border-box; }
+body { font-family: "Georgia", "Iowan Old Style", "Charter", "Cambria", serif;
+       color: #1a1a1a; line-height: 1.65; max-width: 720px;
+       margin: 28px auto; padding: 0 20px; background: #fafaf7; }
+h1 { font-family: Georgia, serif; font-weight: normal; font-size: 1.9em;
+     margin-top: 1.2em; border-bottom: 1px solid #1a1a1a; padding-bottom: 4px;
+     page-break-after: avoid; }
+h2 { font-family: Georgia, serif; font-weight: normal; font-size: 1.4em;
+     margin-top: 1.8em; border-bottom: 1px solid #555; padding-bottom: 2px;
+     page-break-after: avoid; }
+h3 { font-family: Georgia, serif; font-weight: bold; font-size: 1.1em;
+     margin-top: 1.5em; margin-bottom: 0.4em; page-break-after: avoid; }
+h4 { font-family: Georgia, serif; font-weight: bold; font-size: 1em;
+     margin-top: 1.2em; page-break-after: avoid; }
+p { margin: 0.6em 0; }
+code { font-family: "Courier New", "Consolas", monospace; font-size: 0.92em;
+       background: transparent; border: 1px solid #999; padding: 0 4px;
+       border-radius: 0; color: #1a1a1a; }
+pre { font-family: "Courier New", "Consolas", monospace; font-size: 0.88em;
+      background: transparent; color: #1a1a1a; border: 1px solid #1a1a1a;
+      padding: 10px 14px; margin: 12px 0; line-height: 1.45;
+      page-break-inside: avoid; white-space: pre-wrap; }
+pre code { background: transparent; border: none; padding: 0; }
+table { border-collapse: collapse; margin: 14px 0; width: 100%;
+        page-break-inside: avoid; font-family: Georgia, serif; font-size: 0.95em; }
+th, td { border: 1px solid #1a1a1a; padding: 6px 10px; text-align: left;
+         vertical-align: top; background: transparent; }
+th { font-weight: bold; background: transparent; border-bottom: 2px solid #1a1a1a; }
+tr:nth-child(even) td { background: transparent; }
+ul, ol { padding-left: 22px; }
+li { margin: 3px 0; }
+hr { border: none; border-top: 1px solid #999; margin: 26px 0; }
+a { color: #1a1a1a; text-decoration: underline; }
+em { color: #1a1a1a; }
+strong { color: #1a1a1a; }
+@media print {
+  body { max-width: none; margin: 0; padding: 0; background: white; color: black; }
+  h1, h2, h3, h4 { page-break-after: avoid; }
+  pre, table { page-break-inside: avoid; }
+  a { color: black; }
+}
+</style>
+</head>
+<body>
+<h2>Contents</h2>
+<ol>
+<li><a href="#1-getting-started">Getting Started</a></li>
+<li><a href="#2-admin-menu">Admin Menu</a></li>
+<li><a href="#3-cities-and-districts">Cities and Districts</a></li>
+<li><a href="#4-products">Products</a></li>
+<li><a href="#5-discounts-and-sales">Discounts and Sales</a></li>
+<li><a href="#6-sending-messages-to-users">Sending Messages to Users</a></li>
+<li><a href="#7-users">Users</a></li>
+<li><a href="#8-sales-reports">Sales Reports</a></li>
+<li><a href="#9-tools">Tools</a></li>
+<li><a href="#10-auto-ads">Auto Ads</a></li>
+<li><a href="#11-workers">Workers (/klad uploaders)</a></li>
+<li><a href="#12-customer-tiers">Customer Tiers</a></li>
+<li><a href="#13-limits-and-times">Limits and Times</a></li>
+<li><a href="#14-if-something-goes-wrong">If Something Goes Wrong</a></li>
+</ol>
+<hr />
+<h2>1. Getting Started</h2>
+<p>Got a fresh bot? Do these steps in order.</p>
+<h3>Open the admin menu</h3>
+<p>Type <code>/admin</code> in the bot chat. That's where everything lives.</p>
+<p>If <code>/admin</code> says you are not authorized, you are not on the admin list yet. Message support to get added.</p>
+<h3>Set up your locations</h3>
+<pre><code>/admin → Geography Menu → Add New City
+</code></pre>
+<p>Add each city you sell in. Then under each one, add districts:</p>
+<pre><code>Manage Districts → pick city → Add District
+</code></pre>
+<p>Customers shop in this order: city, then district, then product type, then size. If you only sell in one place, just create one city and one district. Name them anything.</p>
+<h3>Make some product types</h3>
+<pre><code>/admin → Products Menu → Manage Product Types
+</code></pre>
+<p>A product type is a category like "Coffee", "Snacks", "Clothing". Pick an emoji for each one. The emoji shows up in the customer menus.</p>
+<h3>Upload your first product</h3>
+<pre><code>/admin → Products Menu → Add Products
+</code></pre>
+<p>The bot will ask you for:</p>
+<ol>
+<li>City</li>
+<li>District</li>
+<li>Product type</li>
+<li>Size (like <code>5g</code> or <code>1 vnt</code>)</li>
+<li>Price in EUR</li>
+<li>The actual file or text the customer gets after paying</li>
+</ol>
+<p>Each upload is one item in stock. Ten copies of the same thing? Upload ten files. Or use Bulk Add to upload many at once.</p>
+<h3>Test it</h3>
+<p>Open a chat with your own bot from a different account. Hit <code>/start</code>, browse, try to buy something.</p>
+<p>Or use the shortcut from the admin menu:</p>
+<pre><code>/admin → User Home
+</code></pre>
+<p>That puts you in the customer view.</p>
+<h3>Write your welcome message</h3>
+<pre><code>/admin → Communications → Welcome Message → Add New Template
+</code></pre>
+<p>Write the intro people see when they <code>/start</code>. Shop name, hours, anything you want them to know.</p>
+<p>You're done. The rest of this guide is for when you need to look things up.</p>
+<hr />
+<h2>2. Admin Menu</h2>
+<p>Type <code>/admin</code>. You see live numbers up top:</p>
+<pre><code>Admin Dashboard
+Users: 412
+Balances: 287.40 EUR
+Sales: 3,148.20 EUR     (last 30 days)
+Products: 89            (in stock)
+</code></pre>
+<p>These refresh every time you open the menu.</p>
+<p>Below that, eleven buttons:</p>
+
+
+
+Button
+What it's for
+
+
+
+
+Analytics
+Reports and sales numbers
+
+
+Purchases
+Recent paid orders
+
+
+Products Menu
+Add, edit, remove products
+
+
+Geography Menu
+Cities and districts
+
+
+Users Menu
+Search, ban, resellers, export
+
+
+Discounts Menu
+Codes, sales, tier system, special prices
+
+
+Communications
+Broadcasts, welcome message, reviews
+
+
+Tools &amp; Settings
+Refunds, payment fixes, backup tokens
+
+
+Auto Ads System
+Automatic posting in chat groups
+
+
+Workers (/klad)
+Trusted users who can upload products
+
+
+User Home
+Switch to the customer view
+
+
+
+<p>If you start filling something in and want to stop, type <code>/terminate</code>. That cancels and takes you back to the admin menu.</p>
+<hr />
+<h2>3. Cities and Districts</h2>
+<pre><code>/admin → Geography Menu
+</code></pre>
+<p>Customers browse city, then district, then product, then size. So locations have to exist before you can put products in them.</p>
+<h3>Cities</h3>
+
+
+
+What
+How
+
+
+
+
+Add
+"Add New City", type the name
+
+
+Rename
+"Manage Cities" → tap the city → type new name
+
+
+Remove
+"Manage Cities" → trash icon → confirm
+
+
+
+<p>Cities show up in alphabet order to customers.</p>
+<h3>Districts</h3>
+<p>A city has to exist first.</p>
+
+
+
+What
+How
+
+
+
+
+Add
+"Manage Districts" → pick city → "Add District"
+
+
+Rename
+tap the district → type new name
+
+
+Remove
+trash icon → confirm
+
+
+
+<p>Heads up: if a city or district still has products in it, you can't delete it. Remove the products first.</p>
+<hr />
+<h2>4. Products</h2>
+<pre><code>/admin → Products Menu
+</code></pre>
+<p>The biggest section.</p>
+
+
+
+Button
+What it does
+
+
+
+
+Add Products
+One-at-a-time
+
+
+Bulk Add Products
+Same product, many files in one go
+
+
+Manage Products
+Browse and remove what's already uploaded
+
+
+View Bot Stock
+Total available, grouped
+
+
+Added Products Log
+History of every product you've ever added
+
+
+Manage Product Types
+Names and emojis
+
+
+Reassign Product Type
+Move products from one type to another
+
+
+Bulk Edit Prices
+Change prices on many products at once
+
+
+
+<h3>Add one product</h3>
+<p>The bot asks you, in order:</p>
+<ol>
+<li>Pick city</li>
+<li>Pick district</li>
+<li>Pick product type</li>
+<li>Pick a size (existing or new)</li>
+<li>Type the price (EUR, like <code>12.50</code>)</li>
+<li>Upload the file the buyer gets — text, image, document, GIF, or video</li>
+</ol>
+<p>Each upload becomes one item in stock.</p>
+<h3>Bulk add</h3>
+<p>Same questions, but at the upload step you can send many files at once. Each one becomes a separate item at the same price. Saves time when you have many of the same thing.</p>
+<h3>Manage Products</h3>
+<pre><code>Manage Products → city → district → product type
+</code></pre>
+<p>You see a list of every available item with its size, price, and a trash button.</p>
+<ul>
+<li><strong>Prev / Next</strong> — flip pages</li>
+<li><strong>Add More Products</strong> — quick jump to add more of the same type</li>
+<li><strong>Delete All Available</strong> — removes EVERY available item in this city/district/type. Don't tap by accident.</li>
+</ul>
+<h3>Product Types</h3>
+<pre><code>Products Menu → Manage Product Types
+</code></pre>
+<p>Names and emojis. Don't have both <code>Drinks</code> and <code>Beverages</code> — pick one. If you need to merge two types, use Reassign Product Type.</p>
+<h3>Bulk Edit Prices</h3>
+<p>Change prices for:</p>
+<ul>
+<li>All products of a type</li>
+<li>All products in a district</li>
+<li>All products of a specific size</li>
+</ul>
+<p>Useful for sales, fixing entry mistakes, or adjusting to the market.</p>
+<h3>View Bot Stock</h3>
+<p>A quick count of what's available right now. No editing here, just looking.</p>
+<h3>Added Products Log</h3>
+<p>Everything you've ever uploaded, in order from newest to oldest. Useful for checking that a bulk upload finished, or remembering what you uploaded last week.</p>
+<hr />
+<h2>5. Discounts and Sales</h2>
+<pre><code>/admin → Discounts Menu
+</code></pre>
+<p>Four different ways to lower a price. Each one has its own little badge.</p>
+
+
+
+Type
+Badge
+Where you set it
+What it is
+
+
+
+
+Discount Codes
+(typed by buyer)
+Discount Codes
+Coupons
+
+
+Product Discounts
+fire
+Product Discounts
+Auto-applied sales
+
+
+Reseller Pricing
+crown
+Reseller Discounts
+Special prices for chosen users
+
+
+Tier System
+trophy
+Tier System
+Per-tier prices and an automatic % off based on the buyer's tier
+
+
+
+<h3>Discount Codes (coupons)</h3>
+<p>Buyers type the code at checkout. Like <code>SAVE10</code> or <code>WELCOME50</code>.</p>
+<pre><code>Discount Codes → Create New Discount Code
+</code></pre>
+<p>The bot asks for:</p>
+<ol>
+<li>Code name (it makes it all caps automatically)</li>
+<li>Percent off (1 to 100)</li>
+<li>How many uses — leave empty for unlimited, or set a max</li>
+<li>Does it stack with sales?</li>
+<li>Yes: applies on top of an active sale</li>
+<li>No: applies to original price only (sale ignored when this code is used)</li>
+</ol>
+<p>The system always picks whichever ends up cheapest for the buyer.</p>
+<p>To delete a code: tap the trash button next to it in the list.</p>
+<h3>Product Discounts (sales)</h3>
+<p>These are auto-applied. Buyers see the fire badge next to discounted items.</p>
+<pre><code>Product Discounts → Add Product Discount
+</code></pre>
+<p>Pick a scope:</p>
+<ul>
+<li>All products of a type, anywhere</li>
+<li>A specific city</li>
+<li>A city plus a district</li>
+<li>City plus district plus type plus size (one specific item)</li>
+</ul>
+<p>Then a percent off. That's it.</p>
+<h3>Reseller Pricing</h3>
+<p>For users you've marked as resellers. They see lower prices on items with the crown badge.</p>
+<p>Two steps:</p>
+<p><strong>Mark a user as reseller:</strong></p>
+<pre><code>Users Menu → Manage Resellers → Add Reseller
+</code></pre>
+<p><strong>Set the special prices:</strong></p>
+<pre><code>Discounts → Reseller Discounts → Add Reseller Price
+</code></pre>
+<p>Same scope choices as product discounts.</p>
+<h3>Tier System (per-tier pricing and global discount)</h3>
+<p>Customers earn tiers automatically — see section 12 for how that works. The Tier System lets you give each tier its own pricing and an automatic % off.</p>
+<pre><code>Discounts → Tier System
+</code></pre>
+<p>From this screen you can:</p>
+<ul>
+<li><strong>Edit the tier ladder</strong> — rename tiers, change thresholds, add or remove levels.</li>
+<li><strong>Switch the tier metric</strong> — count purchases or count EUR spent. Affects how every customer's tier is calculated from now on.</li>
+<li><strong>Tier Discount Rules</strong> — like Product Discounts but limited to one tier. "10% off all Coffee for VIP only", that kind of thing. Pick scope (type / city / district / size), pick the tier, set the percent.</li>
+<li><strong>Per-Tier Global Discount</strong> — one flat % off everything in the shop, applied automatically at the bottom of the price stack. Each tier has its own number, so you can set 0% for New, 5% for Regular, 10% for VIP, 15% for Legend. Buyers in tiers with a non-zero % see a banner on their home screen.</li>
+<li><strong>Reset to Defaults</strong> — wipes back to the original ladder if you've made a mess of it.</li>
+</ul>
+<p>Tier discounts apply automatically — buyers don't type anything. Items affected by a tier rule show the trophy badge.</p>
+<h3>How they all work together</h3>
+<p>Behind the scenes:</p>
+<ol>
+<li>Start with the catalog price</li>
+<li>Apply the fire (sale) discount if any</li>
+<li>Apply the crown (reseller) discount if the buyer is a reseller</li>
+<li>Apply the trophy (tier) rule if one matches this product and the buyer's tier</li>
+<li>Apply the buyer's per-tier global % off (if their tier has one set)</li>
+<li>At checkout, apply the typed code if the buyer enters one — and the code's "stack" setting decides whether it stacks on the already-discounted price or replaces it</li>
+</ol>
+<p>The button always shows what they actually pay, with the original price crossed out next to it.</p>
+<hr />
+<h2>6. Sending Messages to Users</h2>
+<pre><code>/admin → Communications
+</code></pre>
+<h3>Broadcast</h3>
+<p>Send a message to every user.</p>
+<pre><code>Broadcast Message → All Users
+</code></pre>
+<p>Type the message, send it, confirm. At the end you get a "X sent, Y failed" summary. The failures are usually people who blocked the bot — that happens, don't worry about it.</p>
+<h3>Welcome Message</h3>
+<p>What people see when they <code>/start</code>.</p>
+<pre><code>Welcome Message
+</code></pre>
+
+
+
+Action
+What it does
+
+
+
+
+Add New Template
+Write a new version
+
+
+Edit
+Change one you already have
+
+
+Activate
+Make this the live <code>/start</code> greeting
+
+
+Delete
+Remove a template
+
+
+Reset to Built-in Default
+Go back to the original text
+
+
+
+<p>You can keep multiple versions saved (one normal, one for a holiday sale, etc.) and switch between them. Your text shows below the "Hello {name}! / Balance / Status / Basket" header that's always there at the top.</p>
+<h3>Manage Reviews</h3>
+<p>Look at and remove customer reviews. Delete spam, abusive ones, or anything inaccurate.</p>
+<pre><code>Manage Reviews
+</code></pre>
+<p>Paginated list with a trash button on each. Worth checking once a week. A bad review left up for a long time hurts sales.</p>
+<hr />
+<h2>7. Users</h2>
+<pre><code>/admin → Users Menu
+</code></pre>
+<h3>Search User</h3>
+<p>Find anyone by <code>@username</code> or Telegram ID.</p>
+<pre><code>Search User
+</code></pre>
+<p>You see: username, ID, level, total purchases, balance, ban status. Then:</p>
+<ul>
+<li><strong>Ban User</strong> — they get "Account suspended" on every action</li>
+<li><strong>Unban User</strong> — let them back in</li>
+</ul>
+<h3>Resellers</h3>
+<p>Resellers see lower prices on crown-badged items.</p>
+
+
+
+Button
+What
+
+
+
+
+Add Reseller
+Find a user, mark them
+
+
+View All Resellers
+List of everyone marked
+
+
+Remove Reseller Status
+Take it back
+
+
+
+<p>The reseller mark by itself doesn't change anything. You also have to set up reseller discounts under Discounts → Reseller Discounts.</p>
+<h3>Export Users CSV</h3>
+<pre><code>Export Users CSV
+</code></pre>
+<p>Downloads a file with: IDs, usernames, balances, purchase counts. Good as a backup, or to look at in Excel.</p>
+<hr />
+<h2>8. Sales Reports</h2>
+<pre><code>/admin → Analytics
+</code></pre>
+<h3>Dashboard</h3>
+<p>A quick snapshot: total users, money held in balances, sales in the last 30 days, products in stock. Hit Refresh after big changes.</p>
+<h3>Generate Report</h3>
+<p>Pick a time period:</p>
+<ul>
+<li>Today / Yesterday</li>
+<li>This Week / Last Week</li>
+<li>This Month / Last Month</li>
+<li>Year So Far</li>
+</ul>
+<p>Each report shows: how many orders, total revenue, average order size, and a breakdown by product type.</p>
+<h3>Sales by City</h3>
+<p>Which cities make the most money. Use this to decide where to grow or where to run a clearance sale.</p>
+<h3>Sales by Type</h3>
+<p>Which product types sell. Spot the best sellers and the dead weight.</p>
+<h3>Top Products</h3>
+<p>Specific item rankings — the exact sizes and prices that move.</p>
+<h3>Purchases (recent orders)</h3>
+<pre><code>/admin → Purchases
+</code></pre>
+<p>Live feed of every paid order. Newest first. Each row: when, who, what, how much, payment method.</p>
+<hr />
+<h2>9. Tools</h2>
+<pre><code>/admin → Tools &amp; Settings
+</code></pre>
+<p>The toolbox.</p>
+<h3>Set Bot Media</h3>
+<pre><code>Set Bot Media
+</code></pre>
+<p>A photo, GIF, or animation that shows up next to certain bot messages for branding. Send a new one to replace.</p>
+<h3>Clear Reservations</h3>
+<pre><code>Clear Reservations
+</code></pre>
+<p>Removes every "in basket but not paid" item across all users. Asks you to confirm.</p>
+<h3>Payment Recovery</h3>
+<pre><code>Payment Recovery → Lookup by Queue ID
+</code></pre>
+<p>When a customer paid but didn't get their item. Get the Queue ID from their order screen (they can show you, or you can look it up in your Purchases view), check the order, and send the item manually.</p>
+<h3>Product Refund</h3>
+<pre><code>Product Refund
+</code></pre>
+<p>Refund a paid order. Pick from the list of recent paid orders. The buyer's account balance gets the EUR back.</p>
+<h3>Backup Tokens</h3>
+<pre><code>Backup Tokens Status
+</code></pre>
+<p>A safety net. If your main bot token gets banned, you can switch to a spare one without losing customers.</p>
+
+
+
+Action
+What
+
+
+
+
+Add Backup Token
+Save a spare
+
+
+Switch
+Swap to it instantly
+
+
+
+<hr />
+<h2>10. Auto Ads</h2>
+<pre><code>/admin → Auto Ads System
+</code></pre>
+<p>This auto-posts your shop ad into Telegram chat groups on a schedule. It uses <strong>separate Telegram user accounts</strong> (not the bot itself) to do the posting. That's how it gets around Telegram's spam checks.</p>
+<h3>Why bother</h3>
+<p>Chat groups push old messages down fast. Manual re-posting is tedious and easy to forget. Auto Ads handles it 24/7, in many groups, with safety stuff built in.</p>
+<h3>Sub-menu</h3>
+
+
+
+Button
+What
+
+
+
+
+Manage Accounts
+The user accounts that do the posting
+
+
+Campaigns
+Edit existing campaigns
+
+
+Create Campaign
+Start a new one
+
+
+Statistics
+Numbers and totals
+
+
+
+<h3>Big picture</h3>
+<ol>
+<li>Add one or more <strong>Telegram user accounts</strong></li>
+<li>Each one joins the chat groups where you want ads</li>
+<li>Sync groups so the system knows which groups each account is in</li>
+<li>Make a <strong>campaign</strong> — a message plus how often plus which groups</li>
+<li>The system takes turns posting, waits in cooldowns, and bumps your ad on schedule</li>
+</ol>
+<h3>Adding an account (4 things)</h3>
+<pre><code>Auto Ads → Manage Accounts → Add New Account
+</code></pre>
+<p>The bot will ask for:</p>
+<p><strong>1 — Account name</strong>
+A label for you. "Worker 1", "Vilnius Account", whatever. Up to 30 letters.</p>
+<p><strong>2 — Phone number</strong>
+Real phone number with country code, like <code>+37061234567</code>. It has to be a number that can get Telegram codes.</p>
+<p><strong>3 — API ID</strong>
+A number from <a href="https://my.telegram.org">my.telegram.org</a>. Log in there with the same phone, click "API development tools", copy the <code>api_id</code>.</p>
+<p><strong>4 — API Hash</strong>
+Same page on <code>my.telegram.org</code>. The long string of letters and numbers next to <code>api_id</code>.</p>
+<p>After step 4 the account exists but isn't logged in yet.</p>
+<h3>Logging the account in</h3>
+<pre><code>Manage Accounts → tap the account → Authenticate Account
+</code></pre>
+<p>Telegram sends a login code to that account's official Telegram app. Type it into the bot. If 2-step verification is on, you'll also be asked for the password.</p>
+<p>Once logged in, the account is <strong>active</strong>.</p>
+<h3>Account settings</h3>
+<p>After tapping an account in the list:</p>
+
+
+
+Button
+What
+
+
+
+
+Authenticate / Re-Authenticate
+Log in (or log in again if the session expires)
+
+
+View Groups
+All groups this account is in
+
+
+Sync Groups
+Refresh the list from Telegram
+
+
+Set Daily Limit
+Max messages this account sends per day
+
+
+Set Proxy
+Optional, for hiding the account's IP
+
+
+Force Resume Now
+Skip a cooldown
+
+
+Delete Account
+Remove (no undo)
+
+
+
+<h3>Daily Limit — what to pick</h3>
+<p>Telegram bans accounts that post too much. The daily limit is your safety cap. New accounts should stay low. Older accounts can go higher.</p>
+<h3>Joining new groups</h3>
+<p>The account itself has to be a member before it can post. The bot doesn't auto-join.</p>
+<ol>
+<li>Open Telegram on the worker account</li>
+<li>Find the group, hit Join</li>
+<li>In the bot: Manage Accounts → tap account → Sync Groups</li>
+<li>The new group shows up in the list — toggle it on</li>
+</ol>
+<h3>Making a campaign (5 things)</h3>
+<pre><code>Auto Ads → Create Campaign
+</code></pre>
+<p>The bot asks for:</p>
+<p><strong>1 — Campaign name</strong>
+A label. "Daily Promo", "Weekend Sale". Up to 50 letters.</p>
+<p><strong>2 — Account</strong>
+Which account does the posting. Only logged-in accounts show up.</p>
+<p><strong>3 — How often</strong>
+Frequency. Every 30 minutes, 1 hour, 2 hours, etc.</p>
+<p><strong>4 — Groups</strong>
+Either:
+- All Groups — every group this account is in (and toggled on)
+- Specific Groups — pick a subset by tapping each one</p>
+<p><strong>5 — Message</strong>
+The actual ad. Text plus optional photo or video.</p>
+<p>After step 5 the campaign goes live right away. You can pause it whenever.</p>
+<h3>Managing campaigns</h3>
+<pre><code>Campaigns
+</code></pre>
+<p>Each one has:</p>
+
+
+
+Button
+What
+
+
+
+
+Pause
+Stop posting (campaign stays saved)
+
+
+Resume
+Start a paused one again
+
+
+Delete
+Remove for good
+
+
+
+<p>Each row shows: status (running, paused, failed), account, target (all groups or how many specific), frequency.</p>
+<h3>Anti-ban stuff</h3>
+<p>Built in:</p>
+<ul>
+<li>The accounts pretend to be on real phones (Samsung, Pixel, iPhone) instead of looking like bots</li>
+<li>Auto-pause when Telegram throttles, auto-resume when it's safe</li>
+<li>Daily limits stop sending when reached</li>
+<li>Random spacing between posts so it looks human</li>
+<li>Optional proxies</li>
+</ul>
+<p>Even with all this, accounts can still get banned.</p>
+<h3>Statistics</h3>
+<pre><code>Statistics
+</code></pre>
+<p>Shows: total accounts and how many are active, total campaigns and how many are active, lifetime messages sent, anti-ban status.</p>
+<hr />
+<h2>11. Workers (/klad uploaders)</h2>
+<pre><code>/admin → Workers (/klad)
+</code></pre>
+<p>Workers are people you trust to upload products into your shop without giving them the full admin menu. They get a single command — <code>/klad</code> — that opens a stripped-down upload screen. They can only drop products into city/district/type/size combinations that <strong>already exist</strong>, so they can't accidentally create new categories or change pricing.</p>
+<h3>Why use this</h3>
+<p>If you have someone restocking inventory in a specific city, you don't want to hand them <code>/admin</code>. Workers see only what they need to: pick a location and product, send the file, done. Each upload is stamped with their <code>@username</code> so you can audit who added what.</p>
+<h3>Adding a worker</h3>
+<pre><code>Workers → Add Worker
+</code></pre>
+<p>Send either:</p>
+<ul>
+<li>A numeric Telegram user ID (like <code>123456789</code>)</li>
+<li>An <code>@username</code></li>
+</ul>
+<p>If you give a username, the user must have <code>/start</code>'d the bot at least once so the bot knows their numeric ID.</p>
+<h3>The Workers list</h3>
+<p>Each row shows the worker's @username (or numeric ID if no username on file), how many products they've ever uploaded, how many of those are still available, and the date they were added. Two buttons per row:</p>
+
+
+
+Button
+What it does
+
+
+
+
+Disable / Enable
+Turn off /klad access without removing the worker. Their existing uploads stay in inventory.
+
+
+Trash
+Remove for good. Existing uploads still stay in inventory — you only revoke /klad access.
+
+
+
+<h3>What a worker sees on /klad</h3>
+<p>When the worker types <code>/klad</code> they get a small menu:</p>
+
+
+
+Button
+What it does
+
+
+
+
+Upload Product
+Walk through pick-city → pick-district → pick-type → pick-size → send file. Only existing combinations show up.
+
+
+My Uploads
+Their own upload history with delete buttons (only for items still available).
+
+
+Exit
+Close the menu.
+
+
+
+<p>Workers can't change prices, can't add new categories, can't see other workers' uploads, and can't see customer data. They only see the upload tools.</p>
+<h3>Auditing</h3>
+<p>Every upload, deletion, and toggle gets logged. You can see a worker's history under their profile in <code>Users Menu → Search User</code>. Products uploaded by a worker show their tag (<code>@username</code>) on the admin product list — useful for tracing back where a bad item came from.</p>
+<hr />
+<h2>12. Customer Tiers</h2>
+<p>The bot tracks every buyer's activity and gives them a tier automatically. By default the ladder is:</p>
+
+
+
+Tier
+Threshold
+
+
+
+
+New
+0
+
+
+Regular
+5
+
+
+VIP
+15
+
+
+Legend
+30+
+
+
+
+<p>The threshold means "purchase count" out of the box. You can rename tiers, change the numbers, add more levels, or remove some. Set it up under:</p>
+<pre><code>/admin → Discounts Menu → Tier System
+</code></pre>
+<h3>Switching the metric</h3>
+<p>The ladder can rank customers by either:</p>
+<ul>
+<li><strong>Purchase count</strong> — every paid order counts as 1.</li>
+<li><strong>EUR spent</strong> — sum of paid order values.</li>
+</ul>
+<p>Switch from <code>Tier System → Switch Metric</code>. Existing tier-discount rules stay attached to their tier name, but the threshold numbers themselves don't auto-convert — review them after switching.</p>
+<h3>Editing the ladder</h3>
+<pre><code>Tier System → Edit Tier Levels
+</code></pre>
+<p>For each level you can:</p>
+<ul>
+<li>Rename it (anything you want — emoji are fine, like "🥉 Bronze" or "👑 Legend")</li>
+<li>Change its threshold</li>
+<li>Set its global discount % (see below)</li>
+<li>Delete it</li>
+</ul>
+<p>Or use <code>Add Tier Level</code> to slot in a new one. The ladder is auto-sorted by threshold, so you don't have to insert it in the right spot.</p>
+<h3>Per-tier global discount</h3>
+<p>Each tier can have its own automatic % off everything in the shop. Set it under:</p>
+<pre><code>Tier System → Per-Tier Global Discount
+</code></pre>
+<p>Or directly when editing a tier. Set 0% to disable for that tier. The discount applies last in the price stack, on top of any sale, reseller, or scoped tier rule the buyer already qualified for.</p>
+<p>Buyers in a tier with a non-zero % see a banner like "🎁 Legend bonus: 15% off every item!" on their home screen so they know it's working.</p>
+<h3>Where the tier shows up</h3>
+<ul>
+<li>Their home screen at the top</li>
+<li>Their profile (with a progress bar to the next tier)</li>
+<li>Your user search</li>
+</ul>
+<p>Customers see their tier name and progress; they don't see the threshold numbers or the discount stack — just the final price.</p>
+<hr />
+<h2>13. Limits and Times</h2>
+
+
+
+Setting
+Value
+
+
+
+
+Basket items reserved for
+15 minutes
+
+
+Invoice payment window
+20 minutes
+
+
+Top-up payment window
+20 minutes
+
+
+Minimum top-up
+5.00 EUR
+
+
+Max items in basket
+about 5–10
+
+
+Cooldown between adding items
+a few seconds
+
+
+Sales report window
+last 30 days
+
+
+Recent purchases shown to customer
+last 20
+
+
+Payment confirmation time
+about 2 minutes after they send
+
+
+Timestamps shown in the bot
+Europe/Vilnius local time
+
+
+
+<hr />
+<h2>14. If Something Goes Wrong</h2>
+<h3>"/admin doesn't work"</h3>
+<p>You're not on the admin list. Message support to get added.</p>
+<h3>"Customer paid but didn't get the item"</h3>
+<ol>
+<li>Get their Queue ID from the order screen</li>
+<li>Tools &amp; Settings → Payment Recovery → Lookup by Queue ID</li>
+<li>Check the order, send the item manually</li>
+</ol>
+<p>If the payment really did go through but the bot missed it (rare), this manual fix sorts it out.</p>
+<h3>"Discount code isn't working"</h3>
+<ul>
+<li>Spelled right? They're auto-uppercased.</li>
+<li>Out of uses? Check the code list — uses-left will be 0.</li>
+<li>Was it deleted?</li>
+<li>Code is set to "no stack" while there's also a sale on? In that case the bot picks whichever ends up cheaper for the buyer. If the sale is already the lower price, the code looks like it didn't apply — but the buyer is paying the lowest possible price.</li>
+</ul>
+<h3>"Stock count looks wrong"</h3>
+<ul>
+<li>View Bot Stock shows what's currently available, not counting reservations.</li>
+<li>Purchases shows what's already sold.</li>
+<li>If old basket reservations are stuck, run Clear Reservations.</li>
+</ul>
+<h3>"Customer says invoice expired"</h3>
+<p>Invoices last 20 minutes. If they're slow, they have to start over. Their basket items stay reserved for 15 minutes, so if they're quick they can re-checkout without losing them.</p>
+<h3>"Uploaded a product with the wrong info"</h3>
+<p>You can't edit an uploaded file directly. What to do:</p>
+<ol>
+<li>Find it in Manage Products</li>
+<li>Delete it</li>
+<li>Upload it again correctly</li>
+</ol>
+<p>For just price corrections, Bulk Edit Prices fixes many at once.</p>
+<h3>"An Auto Ads account stopped posting"</h3>
+<p>Telegram probably put it in timeout. Usually temporary.</p>
+<ol>
+<li>Auto Ads → Manage Accounts → look at the account</li>
+<li>If it shows a cooldown, leave it. It'll resume on its own.</li>
+<li>If the session expired, log it in again.</li>
+<li>If it got banned for good, you'll need a new SIM and new API credentials.</li>
+</ol>
+<h3>"Auto Ads campaign isn't posting in a new group"</h3>
+<ol>
+<li>Make sure the worker account is actually in the group (open Telegram on that account)</li>
+<li>Manage Accounts → tap account → Sync Groups</li>
+<li>Find the new group in the list, turn it on</li>
+<li>If the campaign targets All Groups, it'll start posting next cycle. If it targets specific groups, edit the campaign and add this one.</li>
+</ol>
+<h3>"The bot got banned"</h3>
+<p>If you have backup tokens, switch to one. Otherwise message support — a new token has to be made through BotFather.</p>
+<h3>"A worker can't /klad — bot says they're not registered"</h3>
+<ol>
+<li>Workers → check the list. Are they there with a green check (Enable on)?</li>
+<li>If they're disabled, tap Enable.</li>
+<li>If they're not in the list at all, you never added them — Add Worker.</li>
+<li>If you added by @username and the bot says "user hasn't started the bot yet", tell them to send <code>/start</code> first, then add them again.</li>
+</ol>
+<h3>"Tier discount % doesn't seem to apply"</h3>
+<ol>
+<li>Discounts Menu → Tier System → check the buyer's tier has a non-zero %.</li>
+<li>The discount applies last in the price stack — if a sale or reseller price already brought the price near zero, the % off may be small.</li>
+<li>The buyer should see the "🎁 ... bonus: X% off" banner on their home screen. If they don't, their tier is set to 0% (or they're in a tier with no global discount).</li>
+<li>Tier is cached for ~60 seconds per user — fresh purchases take up to a minute to bump them across a tier boundary.</li>
+</ol>
+<h3>"I switched the tier metric and now everyone's tier looks wrong"</h3>
+<p>Threshold numbers don't auto-convert when you switch between purchase count and EUR spent. A "VIP at 15" makes sense when 15 means purchases, but probably doesn't when 15 means EUR. Go into Edit Tier Levels and update each threshold to a number that makes sense for the new metric.</p>
+<hr />
+<h2>Quick commands</h2>
+
+
+
+Command
+Who
+What
+
+
+
+
+<code>/start</code>
+Anyone
+Customer home screen (use it to test)
+
+
+<code>/admin</code>
+Admin
+Admin menu
+
+
+<code>/klad</code>
+Worker
+Open the worker upload menu (only works if admin has added them as a worker)
+
+
+<code>/terminate</code>
+Admin
+Stop and go back to admin menu
+
+
+
+<hr />
+</body>
+</html>

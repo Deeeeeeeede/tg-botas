@@ -1,8 +1,13 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "vm"
+run = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+
+[deployment.env]
+PORT = "8080"
+NODE_ENV = "production"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -18,3 +23,23 @@ expertMode = true
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 8082
+externalPort = 3000
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+OWNER_ID = "8725051269"

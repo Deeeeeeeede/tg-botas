@@ -222,6 +222,10 @@ export const workersTable = pgTable("bot_workers", {
   enabled: boolean("enabled").notNull().default(true),
   totalUploads: integer("total_uploads").notNull().default(0),
   addedAt: timestamp("added_at").notNull().defaultNow(),
+  // Worker quick-upload: recent routes (JSON: SavedRoute[], newest-first, max 5)
+  // and a pinned default route (JSON: SavedRoute | null).
+  recentRoutes: text("recent_routes"),
+  defaultRoute: text("default_route"),
 });
 
 export const reviewsTable = pgTable("bot_reviews", {

@@ -19,6 +19,75 @@ import {
 import { getCities, getDistricts, getProductTypes } from "../db";
 import { formatEur, formatDate } from "../utils";
 
+// ─── Saved-route helpers (quick-upload menu) ─────────────────────────────────
+
+export type SavedRoute = {
+  cityId: number;
+  districtId: number;
+  typeId: number;
+  size: string;
+  label: string; // "City · District · 🔮 Type · Size"
+};
+
+/** Build a human-readable label for a route by looking up names from the DB. */
+export async function buildRouteLabel(
+  cityId: number,
+  districtId: number,
+  typeId: number,
+  size: string,
+): Promise<string> {
+  const [city, district, type] = await Promise.all([
+    db.select({ name: citiesTable.name }).from(citiesTable)
+      .where(eq(citiesTable.id, cityId)).then((r) => r[0]),
+    db.select({ name: districtsTable.name }).from(districtsTable)
+      .where(eq(districtsTable.id, districtId)).then((r) => r[0]),
+    db
+      .select({ name: productTypesTable.name, emoji: productTypesTable.emoji })
+      .from(productTypesTable)
+      .where(eq(productTypesTable.id, typeId))
+      .then((r) => r[0]),
+  ]);
+  const cityName = city?.name ?? `City#${cityId}`;
+  const distName = district?.name ?? `Dist#${districtId}`;
+  const typePart = type ? `${type.emoji} ${type.name}` : `Type#${typeId}`;
+  return `${cityName} · ${distName} · ${typePart} · ${size}`;
+}
+
+/**
+ * Prepend `route` to a worker's recent-routes list (max 5, deduped by route).
+ * Does nothing if the worker record cannot be found.
+ */
+export async function saveWorkerRecentRoute(
+  telegramId: number,
+  route: SavedRoute,
+): Promise<void> {
+  const worker = await db
+    .select()
+    .from(workersTable)
+    .where(eq(workersTable.telegramId, telegramId))
+    .then((r) => r[0]);
+  if (!worker) return;
+
+  const existing: SavedRoute[] = worker.recentRoutes
+    ? (JSON.parse(worker.recentRoutes) as SavedRoute[])
+    : [];
+  // Remove any duplicate entry for the exact same route
+  const deduped = existing.filter(
+    (r) =>
+      !(
+        r.cityId === route.cityId &&
+        r.districtId === route.districtId &&
+        r.typeId === route.typeId &&
+        r.size === route.size
+      ),
+  );
+  const updated = [route, ...deduped].slice(0, 5);
+  await db
+    .update(workersTable)
+    .set({ recentRoutes: JSON.stringify(updated) })
+    .where(eq(workersTable.id, worker.id));
+}
+
 // Resolve the workerTag exactly as the upload paths in index.ts do:
 // worker record username -> users table username -> telegram ID string.
 // Must stay in sync with the upload-time derivation or uploads become invisible.
@@ -440,21 +509,64 @@ export async function removeWorker(
 export async function showKladMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;
   ctx.session.data = undefined;
-  const kb = inlineKeyboard([
-    [{ text: "📤 Upload Product", callback_data: "klad:upload" }],
-    [{ text: "📋 My Uploads", callback_data: "klad:my_uploads" }],
-    [{ text: "✖ Exit", callback_data: "klad:exit" }],
-  ]);
+
+  // Load saved routes for this worker
+  const worker = await db
+    .select()
+    .from(workersTable)
+    .where(eq(workersTable.telegramId, (ctx as any).from?.id))
+    .then((r) => r[0])
+    .catch(() => undefined);
+
+  const recent: SavedRoute[] = worker?.recentRoutes
+    ? (JSON.parse(worker.recentRoutes) as SavedRoute[])
+    : [];
+  const defaultRoute: SavedRoute | null = worker?.defaultRoute
+    ? (JSON.parse(worker.defaultRoute) as SavedRoute)
+    : null;
+
+  const buttons: { text: string; callback_data: string }[][] = [];
+
+  // Default route — pinned at the top with a star
+  if (defaultRoute) {
+    const cb = `klad:quick:${defaultRoute.cityId}:${defaultRoute.districtId}:${defaultRoute.typeId}:${encodeURIComponent(defaultRoute.size)}`;
+    buttons.push([{ text: `⭐ ${defaultRoute.label}`, callback_data: cb }]);
+  }
+
+  // Up to 3 recent routes (excluding the default if it matches one)
+  const recentToShow = defaultRoute
+    ? recent
+        .filter(
+          (r) =>
+            !(
+              r.cityId === defaultRoute.cityId &&
+              r.districtId === defaultRoute.districtId &&
+              r.typeId === defaultRoute.typeId &&
+              r.size === defaultRoute.size
+            ),
+        )
+        .slice(0, 3)
+    : recent.slice(0, 3);
+
+  for (const route of recentToShow) {
+    const cb = `klad:quick:${route.cityId}:${route.districtId}:${route.typeId}:${encodeURIComponent(route.size)}`;
+    buttons.push([{ text: `📍 ${route.label}`, callback_data: cb }]);
+  }
+
+  buttons.push([{ text: "📤 New location", callback_data: "klad:upload" }]);
+  buttons.push([{ text: "📋 My Uploads", callback_data: "klad:my_uploads" }]);
+  buttons.push([{ text: "✖ Exit", callback_data: "klad:exit" }]);
+
+  const hasQuick = defaultRoute || recentToShow.length > 0;
+  const menuText =
+    "👷 <b>Worker Menu</b>" +
+    (hasQuick ? "\n\nQuick upload ↓" : "\n\nSelect an option:");
+  const kb = inlineKeyboard(buttons);
+
   if (ctx.callbackQuery) {
-    await ctx.editMessageText("👷 <b>Worker Menu</b>\nSelect an option:", {
-      parse_mode: "HTML",
-      ...kb,
-    });
+    await ctx.editMessageText(menuText, { parse_mode: "HTML", ...kb });
   } else {
-    await ctx.reply("👷 <b>Worker Menu</b>\nSelect an option:", {
-      parse_mode: "HTML",
-      ...kb,
-    });
+    await ctx.reply(menuText, { parse_mode: "HTML", ...kb });
   }
 }
 

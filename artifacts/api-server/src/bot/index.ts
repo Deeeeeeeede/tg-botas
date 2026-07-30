@@ -175,6 +175,9 @@ import {
   showKladMyUploads,
   showKladUploadDetail,
   deleteKladUpload,
+  SavedRoute,
+  buildRouteLabel,
+  saveWorkerRecentRoute,
 } from "./handlers/worker";
 import {
   showHome,
@@ -437,6 +440,64 @@ To re-subscribe at any time:",
     await showKladMenu(ctx);
   });
 
+  // Shared success handler for all lot-completion paths (klad:done callback,
+  // /done command, and auto-complete on first-file-with-caption). Shows a
+  // compact success message with quick re-upload buttons and persists the used
+  // route in the worker's recent-routes list.
+  async function completeLotForWorker(
+    ctx: any,
+    sessionData: Record<string, any>,
+    fileCount: number,
+  ) {
+    const fromKlad = !!(sessionData["fromKlad"]);
+    if (!fromKlad && (await isAdmin(ctx.from.id))) {
+      return showProductsMenu(ctx);
+    }
+
+    const { cityId, districtId, typeId, size } = sessionData as {
+      cityId?: number;
+      districtId?: number;
+      typeId?: number;
+      size?: string;
+    };
+
+    let successText = `✅ <b>Lot complete.</b> ${fileCount} file${fileCount === 1 ? "" : "s"} saved.`;
+    let kb: any = undefined;
+
+    if (cityId && districtId && typeId && size) {
+      try {
+        const label = await buildRouteLabel(cityId, districtId, typeId, size);
+        successText += `\n\n📍 ${label}`;
+
+        // Persist to recent routes in the background — never block the reply.
+        saveWorkerRecentRoute(ctx.from.id, {
+          cityId,
+          districtId,
+          typeId,
+          size,
+          label,
+        } satisfies SavedRoute).catch(() => {});
+
+        const quickCb = `klad:quick:${cityId}:${districtId}:${typeId}:${encodeURIComponent(size)}`;
+        const defaultCb = `klad:set_default:${cityId}:${districtId}:${typeId}:${encodeURIComponent(size)}`;
+        kb = inlineKeyboard([
+          [{ text: "📤 Upload again here", callback_data: quickCb }],
+          [{ text: "⭐ Set as default", callback_data: defaultCb }],
+          [{ text: "🏠 Worker menu", callback_data: "klad:menu" }],
+        ]);
+      } catch {
+        // If label lookup fails, fall back to plain menu
+      }
+    }
+
+    if (kb) {
+      await ctx.reply(successText, { parse_mode: "HTML", ...kb });
+    } else {
+      await ctx.reply(successText.replace(/<[^>]+>/g, ""));
+      await showKladMenu(ctx);
+    }
+  }
+
   // Register /done BEFORE the text handler so it is intercepted as a command,
   // not treated as a product text message when a worker is in the upload flow.
   bot.command("done", async (ctx: any) => {
@@ -446,31 +507,17 @@ To re-subscribe at any time:",
       step === "admin:add_product:more_files" ||
       step === "admin:add_product:content"
     ) {
-      const data = ctx.session.data ?? {};
-      const fileCount = ((data["fileCount"] as number) ?? 0) + 1;
-      const fromKlad = !!(data as any)["fromKlad"];
+      const data = (ctx.session.data ?? {}) as Record<string, any>;
+      const fileCount = ((data["fileCount"] as number) ?? 1);
       ctx.session.step = undefined;
       ctx.session.data = undefined;
-      await ctx.reply(
-        `✅ Lot complete. ${fileCount} file(s) saved — one buyer will receive all of them.`,
-      );
-      if (fromKlad || !(await isAdmin(ctx.from.id))) {
-        await showKladMenu(ctx);
-      } else {
-        await showProductsMenu(ctx);
-      }
+      await completeLotForWorker(ctx, data, fileCount);
     } else if (step === "admin:add_product:bulk") {
-      const data = ctx.session.data ?? {};
-      const fromKlad = !!(data as any)["fromKlad"];
-      const count = (data as any)["bulkCount"] ?? 0;
+      const data = (ctx.session.data ?? {}) as Record<string, any>;
+      const count = (data["bulkCount"] as number) ?? 0;
       ctx.session.step = undefined;
       ctx.session.data = undefined;
-      await ctx.reply(`✅ Bulk upload complete. ${count} units added.`);
-      if (fromKlad || !(await isAdmin(ctx.from.id))) {
-        await showKladMenu(ctx);
-      } else {
-        await showProductsMenu(ctx);
-      }
+      await completeLotForWorker(ctx, { ...data, fromKlad: true }, count);
     }
   });
 
@@ -1398,12 +1445,10 @@ To re-subscribe at any time:",
       // photo+address in one message), treat it as a complete lot immediately —
       // no need to press Done. Only wait for more files when there is no caption.
       if (msg.caption) {
+        const captionData = { ...data, currentProductId: inserted?.id };
         ctx.session.step = undefined;
         ctx.session.data = undefined;
-        await ctx.reply(
-          `✅ Lot saved (1 file + caption). Opening worker menu…`,
-        );
-        await showKladMenu(ctx);
+        await completeLotForWorker(ctx, captionData, 1);
       } else {
         ctx.session.data = { ...data, currentProductId: inserted?.id };
         ctx.session.step = "admin:add_product:more_files";
@@ -2740,6 +2785,123 @@ To re-subscribe at any time:",
             },
           );
         }
+        // ── Quick upload: skip city/district/type/size menus entirely ──────────
+        // Triggered by the default/recent route buttons in showKladMenu and by
+        // the "Upload again here" button on the lot-completion screen.
+        if (sub === "quick") {
+          const cityId = parseInt(parts[1]!);
+          const districtId = parseInt(parts[2]!);
+          const typeId = parseInt(parts[3]!);
+          const size = decodeURIComponent(parts[4]!);
+
+          // Re-use the same price-lookup logic as klad:size
+          const slot = await db
+            .select()
+            .from(productSlotsTable)
+            .where(
+              and(
+                eq(productSlotsTable.cityId, cityId),
+                eq(productSlotsTable.districtId, districtId),
+                eq(productSlotsTable.typeId, typeId),
+                eq(productSlotsTable.size, size),
+              ),
+            )
+            .limit(1)
+            .then((r) => r[0]);
+          const existing = slot
+            ? undefined
+            : await db
+                .select()
+                .from(productsTable)
+                .where(
+                  and(
+                    eq(productsTable.cityId, cityId),
+                    eq(productsTable.districtId, districtId),
+                    eq(productsTable.typeId, typeId),
+                    eq(productsTable.size, size),
+                  ),
+                )
+                .limit(1)
+                .then((r) => r[0]);
+          const price = slot
+            ? Number(slot.price)
+            : existing
+              ? Number(existing.price)
+              : undefined;
+
+          if (price === undefined) {
+            const label = await buildRouteLabel(cityId, districtId, typeId, size).catch(
+              () => size,
+            );
+            return ctx.editMessageText(
+              `⚠️ <b>${label}</b>\n\nThis route is no longer in the system. Ask an admin to set it up again.`,
+              {
+                parse_mode: "HTML",
+                ...inlineKeyboard([[{ text: "🏠 Worker menu", callback_data: "klad:menu" }]]),
+              },
+            );
+          }
+
+          ctx.session.step = "admin:add_product:content";
+          ctx.session.data = {
+            cityId,
+            districtId,
+            typeId,
+            size,
+            price,
+            addedBy: ctx.from.id,
+            fromKlad: true,
+          };
+
+          const label = await buildRouteLabel(cityId, districtId, typeId, size).catch(
+            () => size,
+          );
+          return ctx.editMessageText(
+            `📤 <b>Upload to: ${label}</b>\n\nSend the product file now.\nPhoto, video, or document — with an optional caption.\nSend multiple files then press ✅ Done for a multi-file lot.`,
+            {
+              parse_mode: "HTML",
+              ...inlineKeyboard([
+                [{ text: "✅ Done", callback_data: "klad:done" }],
+                [{ text: "⬅ Worker menu", callback_data: "klad:menu" }],
+              ]),
+            },
+          );
+        }
+
+        // ── Set a route as the worker's default ──────────────────────────────
+        if (sub === "set_default") {
+          const cityId = parseInt(parts[1]!);
+          const districtId = parseInt(parts[2]!);
+          const typeId = parseInt(parts[3]!);
+          const size = decodeURIComponent(parts[4]!);
+          const label = await buildRouteLabel(cityId, districtId, typeId, size).catch(
+            () => size,
+          );
+          const route: SavedRoute = { cityId, districtId, typeId, size, label };
+          const worker = await db
+            .select()
+            .from(workersTable)
+            .where(eq(workersTable.telegramId, ctx.from.id))
+            .then((r) => r[0]);
+          if (worker) {
+            await db
+              .update(workersTable)
+              .set({ defaultRoute: JSON.stringify(route) })
+              .where(eq(workersTable.id, worker.id));
+          }
+          await ctx.answerCbQuery("⭐ Set as default!");
+          return ctx.editMessageText(
+            `⭐ <b>Default route saved</b>\n\n${label}\n\nIt will appear at the top of your worker menu.`,
+            {
+              parse_mode: "HTML",
+              ...inlineKeyboard([
+                [{ text: "📤 Upload here now", callback_data: `klad:quick:${cityId}:${districtId}:${typeId}:${encodeURIComponent(size)}` }],
+                [{ text: "🏠 Worker menu", callback_data: "klad:menu" }],
+              ]),
+            },
+          );
+        }
+
         if (sub === "my_uploads") return showKladMyUploads(ctx, ctx.from.id);
         if (sub === "view_upload")
           return showKladUploadDetail(ctx, parseInt(parts[1]!), ctx.from.id);
@@ -2803,20 +2965,16 @@ To re-subscribe at any time:",
             step === "admin:add_product:more_files" ||
             step === "admin:add_product:content"
           ) {
-            const fileCount = ((sessionData["fileCount"] as number) ?? 1);
+            const fileCount = (sessionData["fileCount"] as number) ?? 1;
             await ctx.answerCbQuery("Upload complete!");
-            await ctx.reply(`✅ Lot complete. ${fileCount} file(s) saved — upload closed.`);
+            return completeLotForWorker(ctx, sessionData, fileCount);
           } else if (step === "admin:add_product:bulk") {
             const count = (sessionData["bulkCount"] as number) ?? 0;
             await ctx.answerCbQuery("Upload complete!");
-            await ctx.reply(`✅ Bulk upload complete. ${count} units added — upload closed.`);
+            return completeLotForWorker(ctx, { ...sessionData, fromKlad: true }, count);
           } else {
             await ctx.answerCbQuery("Nothing to finish.");
-          }
-          if (sessionData["fromKlad"] || !(await isAdmin(ctx.from.id))) {
             return showKladMenu(ctx);
-          } else {
-            return showProductsMenu(ctx);
           }
         }
         return;

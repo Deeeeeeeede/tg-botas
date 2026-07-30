@@ -687,7 +687,11 @@ export async function showKladSizes(
   await ctx.editMessageText("📐 Select size:", { ...kb });
 }
 
-export async function showKladMyUploads(ctx: Context & { session: BotSession }, userId: number) {
+export async function showKladMyUploads(
+  ctx: Context & { session: BotSession },
+  userId: number,
+  page = 0,
+) {
   const user = await db
     .select()
     .from(workersTable)
@@ -696,6 +700,28 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
   const tag = await resolveWorkerTag(
     user ?? { username: null, telegramId: userId },
   );
+
+  const whereClause = and(
+    eq(productsTable.workerTag, tag),
+    eq(productsTable.status, "available"),
+  );
+
+  const [total] = await db
+    .select({ count: count() })
+    .from(productsTable)
+    .where(whereClause);
+  const totalCount = total?.count ?? 0;
+
+  if (totalCount === 0) {
+    await ctx.editMessageText("You have no available uploads.", {
+      ...inlineKeyboard([[BACK_BTN("klad:menu")]]),
+    });
+    return;
+  }
+
+  const totalPages = Math.ceil(totalCount / UPLOADS_PAGE_SIZE);
+  const safePage = Math.max(0, Math.min(page, totalPages - 1));
+
   const products = await db
     .select({
       id: productsTable.id,
@@ -707,33 +733,35 @@ export async function showKladMyUploads(ctx: Context & { session: BotSession }, 
     })
     .from(productsTable)
     .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
-    .where(
-      and(
-        eq(productsTable.workerTag, tag),
-        eq(productsTable.status, "available")
-      )
-    )
+    .where(whereClause)
     .orderBy(desc(productsTable.createdAt))
-    .limit(20);
+    .limit(UPLOADS_PAGE_SIZE)
+    .offset(safePage * UPLOADS_PAGE_SIZE);
 
-  if (products.length === 0) {
-    await ctx.editMessageText("You have no available uploads.", {
-      ...inlineKeyboard([[BACK_BTN("klad:menu")]]),
-    });
-    return;
-  }
-
-  const kb = inlineKeyboard([
+  const rows: { text: string; callback_data: string }[][] = [
     ...products.map((p) => [
       {
         text: `📦 ${p.typeEmoji} ${p.typeName} ${p.size} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
         callback_data: `klad:view_upload:${p.id}`,
       },
     ]),
-    [BACK_BTN("klad:menu")],
-  ]);
-  await ctx.editMessageText("📋 <b>My Uploads</b> (tap to view):", {
+  ];
+
+  const nav: { text: string; callback_data: string }[] = [];
+  if (safePage > 0)
+    nav.push({ text: "⬅ Prev", callback_data: `klad:my_uploads:${safePage - 1}` });
+  if (safePage < totalPages - 1)
+    nav.push({ text: "Next ➡", callback_data: `klad:my_uploads:${safePage + 1}` });
+  if (nav.length > 0) rows.push(nav);
+  rows.push([BACK_BTN("klad:menu")]);
+
+  const header =
+    totalPages > 1
+      ? `📋 <b>My Uploads</b> — Page ${safePage + 1}/${totalPages} (${totalCount} total)`
+      : `📋 <b>My Uploads</b> (${totalCount} total)`;
+
+  await ctx.editMessageText(`${header}\n\nTap an item to view:`, {
     parse_mode: "HTML",
-    ...kb,
+    ...inlineKeyboard(rows),
   });
 }

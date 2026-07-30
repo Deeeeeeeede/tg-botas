@@ -2892,7 +2892,10 @@ export function createBot(token?: string): Telegraf {
           );
         }
 
-        if (sub === "my_uploads") return showKladMyUploads(ctx, ctx.from.id);
+        if (sub === "my_uploads") {
+          const page = parts[1] ? parseInt(parts[1]) : 0;
+          return showKladMyUploads(ctx, ctx.from.id, isNaN(page) ? 0 : page);
+        }
         if (sub === "view_upload")
           return showKladUploadDetail(ctx, parseInt(parts[1]!), ctx.from.id);
         if (sub === "del_confirm") {

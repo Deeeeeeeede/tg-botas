@@ -730,21 +730,28 @@ export async function showKladMyUploads(
       createdAt: productsTable.createdAt,
       typeName: productTypesTable.name,
       typeEmoji: productTypesTable.emoji,
+      cityName: citiesTable.name,
+      districtName: districtsTable.name,
     })
     .from(productsTable)
     .innerJoin(productTypesTable, eq(productsTable.typeId, productTypesTable.id))
+    .leftJoin(citiesTable, eq(productsTable.cityId, citiesTable.id))
+    .leftJoin(districtsTable, eq(productsTable.districtId, districtsTable.id))
     .where(whereClause)
     .orderBy(desc(productsTable.createdAt))
     .limit(UPLOADS_PAGE_SIZE)
     .offset(safePage * UPLOADS_PAGE_SIZE);
 
   const rows: { text: string; callback_data: string }[][] = [
-    ...products.map((p) => [
-      {
-        text: `📦 ${p.typeEmoji} ${p.typeName} ${p.size} — ${formatEur(p.price)} — ${formatDate(p.createdAt)}`,
-        callback_data: `klad:view_upload:${p.id}`,
-      },
-    ]),
+    ...products.map((p) => {
+      const location = [p.cityName, p.districtName].filter(Boolean).join(", ");
+      return [
+        {
+          text: `${p.typeEmoji} ${p.typeName} ${p.size} — ${formatEur(p.price)}${location ? ` · ${location}` : ""}`,
+          callback_data: `klad:view_upload:${p.id}`,
+        },
+      ];
+    }),
   ];
 
   const nav: { text: string; callback_data: string }[] = [];

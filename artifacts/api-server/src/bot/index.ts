@@ -125,6 +125,8 @@ import {
   activateWelcomeTemplate,
   deleteWelcomeTemplate,
   showReviews,
+  showBroadcastPreview,
+  executeBroadcast,
 } from "./handlers/admin-comms";
 import {
   showDiscountsMenu,
@@ -318,6 +320,16 @@ export function createBot(token?: string): Telegraf {
   });
 
   bot.command("start", async (ctx: any) => {
+    // If this user previously blocked the bot, they are back — clear the suppression
+    // so they can receive future broadcasts again.
+    const user = ctx.state.user as typeof import("@workspace/db").usersTable.$inferSelect | undefined;
+    if (user?.botBlockedAt) {
+      await db
+        .update(usersTable)
+        .set({ botBlockedAt: null, botBlockReason: null })
+        .where(eq(usersTable.telegramId, ctx.from.id))
+        .catch(() => {});
+    }
     await showHome(ctx);
   });
 
@@ -333,6 +345,42 @@ export function createBot(token?: string): Telegraf {
     ctx.session.step = undefined;
     ctx.session.data = undefined;
     await showAdminMenu(ctx);
+  });
+
+  // /stop — unsubscribe from marketing broadcasts. Transactional messages
+  // (order confirmations, payment updates) are never affected.
+  bot.command("stop", async (ctx: any) => {
+    const user = ctx.state.user as any;
+    if (!user) return;
+    if (!user.marketingOptIn) {
+      return ctx.reply(
+        "You are already unsubscribed from announcements.
+
+You will still receive order confirmations and payment updates.
+
+To re-subscribe:",
+        {
+          ...inlineKeyboard([[{ text: "📣 Re-subscribe", callback_data: "settings:marketing_on" }]]),
+        },
+      );
+    }
+    await db
+      .update(usersTable)
+      .set({ marketingOptIn: false })
+      .where(eq(usersTable.telegramId, ctx.from.id));
+    await ctx.reply(
+      "✅ <b>Unsubscribed from broadcasts</b>
+
+You will no longer receive announcement messages.
+
+Order confirmations and payment updates are not affected.
+
+To re-subscribe at any time:",
+      {
+        parse_mode: "HTML",
+        ...inlineKeyboard([[{ text: "📣 Re-subscribe", callback_data: "settings:marketing_on" }]]),
+      },
+    );
   });
 
   // One-time owner-only recovery for the Panevezys stock that landed in the
@@ -721,76 +769,9 @@ export function createBot(token?: string): Telegraf {
 
     if (step === "admin:broadcast") {
       ctx.session.step = undefined;
-      const users = await db.select().from(usersTable);
-      const total = users.length;
-      let sent = 0;
-      let failed = 0;
-
-      const progress = await ctx.reply(
-        `📢 Broadcasting to ${total} user${total === 1 ? "" : "s"}…`,
-      );
-      const progressChatId = progress.chat.id;
-      const progressMsgId = progress.message_id;
-
-      // Telegram allows ~30 messages/sec to different users. We stay well under
-      // that with a fixed batch size and a pause between batches, and back off
-      // when Telegram explicitly asks us to (429 with retry_after).
-      const BATCH_SIZE = 25;
-      const BATCH_PAUSE_MS = 1100;
-      const sleep = (ms: number) =>
-        new Promise<void>((r) => setTimeout(r, ms));
-
-      const sendOne = async (telegramId: number): Promise<boolean> => {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            await bot.telegram.sendMessage(telegramId, text, {
-              parse_mode: "HTML",
-            });
-            return true;
-          } catch (err: any) {
-            const retryAfter = err?.parameters?.retry_after;
-            if (retryAfter) {
-              // Flood limit hit — wait the requested cooldown, then retry.
-              await sleep((retryAfter + 1) * 1000);
-              continue;
-            }
-            // Any other error (user blocked the bot, deactivated, etc.) is
-            // permanent for this recipient — count it as failed and move on.
-            return false;
-          }
-        }
-        return false;
-      };
-
-      for (let i = 0; i < total; i += BATCH_SIZE) {
-        const batch = users.slice(i, i + BATCH_SIZE);
-        const results = await Promise.all(
-          batch.map((u) => sendOne(u.telegramId)),
-        );
-        for (const ok of results) ok ? sent++ : failed++;
-
-        await bot.telegram
-          .editMessageText(
-            progressChatId,
-            progressMsgId,
-            undefined,
-            `📢 Broadcasting… ${sent + failed}/${total} processed (${sent} ✅ / ${failed} ❌)`,
-          )
-          .catch(() => {});
-
-        if (i + BATCH_SIZE < total) await sleep(BATCH_PAUSE_MS);
-      }
-
-      await bot.telegram
-        .editMessageText(
-          progressChatId,
-          progressMsgId,
-          undefined,
-          `✅ <b>Broadcast complete</b>\n\n📨 Delivered: <b>${sent}</b>\n⚠️ Failed: <b>${failed}</b>\n👥 Total: <b>${total}</b>`,
-          { parse_mode: "HTML" },
-        )
-        .catch(() => {});
-      await showCommsMenu(ctx);
+      // Save message in session so the confirm callback can retrieve it.
+      ctx.session.data = { ...(ctx.session.data ?? {}), broadcastText: text };
+      await showBroadcastPreview(ctx, text);
       return;
     }
 
@@ -2096,6 +2077,35 @@ export function createBot(token?: string): Telegraf {
           await ctx.answerCbQuery("Review deleted.");
           return showReviews(ctx, parseInt(parts[2] ?? "0"));
         }
+
+        // ── Broadcast confirmation flow ──
+        if (sub === "broadcast_confirm") {
+          const broadcastText = (ctx.session.data as any)?.broadcastText as string | undefined;
+          ctx.session.data = undefined;
+          if (!broadcastText) {
+            await ctx.answerCbQuery("No message found — please start over.");
+            return showCommsMenu(ctx);
+          }
+          await ctx.answerCbQuery();
+          const progress = await ctx.reply(
+            "📢 <b>Broadcasting…</b>",
+            { parse_mode: "HTML" },
+          );
+          await executeBroadcast(
+            bot.telegram,
+            progress.chat.id,
+            progress.message_id,
+            broadcastText,
+          );
+          return showCommsMenu(ctx);
+        }
+
+        if (sub === "broadcast_cancel") {
+          ctx.session.data = undefined;
+          await ctx.answerCbQuery("Broadcast cancelled.");
+          return showCommsMenu(ctx);
+        }
+
         return;
       }
 
@@ -2579,6 +2589,43 @@ export function createBot(token?: string): Telegraf {
         if (sub === "start") return showTopUpMenu(ctx);
         if (sub === "check") return checkTopUpPayment(ctx);
         if (sub === "cancel") return cancelTopUp(ctx);
+        return;
+      }
+
+      // ── Marketing opt-in / opt-out (any user) ──
+      if (action === "settings") {
+        const sub = parts[0];
+        if (sub === "marketing_on") {
+          await db
+            .update(usersTable)
+            .set({ marketingOptIn: true })
+            .where(eq(usersTable.telegramId, ctx.from.id));
+          await ctx.answerCbQuery("✅ Subscribed to announcements.");
+          await ctx.editMessageText(
+            "✅ <b>Subscribed</b>\n\nYou will now receive announcement broadcasts.\n\nSend /stop at any time to unsubscribe.",
+            { parse_mode: "HTML" },
+          ).catch(() =>
+            ctx.reply("✅ Subscribed to broadcasts. Send /stop to unsubscribe."),
+          );
+          return;
+        }
+        if (sub === "marketing_off") {
+          await db
+            .update(usersTable)
+            .set({ marketingOptIn: false })
+            .where(eq(usersTable.telegramId, ctx.from.id));
+          await ctx.answerCbQuery("✅ Unsubscribed.");
+          await ctx.editMessageText(
+            "✅ <b>Unsubscribed</b>\n\nYou will no longer receive broadcast announcements.\n\nTo re-subscribe:",
+            {
+              parse_mode: "HTML",
+              ...inlineKeyboard([[{ text: "📣 Re-subscribe", callback_data: "settings:marketing_on" }]]),
+            },
+          ).catch(() =>
+            ctx.reply("✅ Unsubscribed from broadcasts. Send /stop to re-subscribe."),
+          );
+          return;
+        }
         return;
       }
 

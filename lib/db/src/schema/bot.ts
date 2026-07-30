@@ -45,6 +45,12 @@ export const usersTable = pgTable("bot_users", {
   tierName: text("tier_name").notNull().default("New"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   lastActiveAt: timestamp("last_active_at").notNull().defaultNow(),
+  // Anti-ban: opt-out flag. Default true so existing users stay subscribed. Set false via /stop.
+  marketingOptIn: boolean("marketing_opt_in").notNull().default(true),
+  // Set when Telegram returns 403/400 during a broadcast (user blocked or deactivated).
+  // Cleared automatically when the user sends /start again.
+  botBlockedAt: timestamp("bot_blocked_at"),
+  botBlockReason: text("bot_block_reason"), // '403_blocked' | '403_deactivated' | '400_not_found'
 });
 
 export const adminsTable = pgTable("bot_admins", {

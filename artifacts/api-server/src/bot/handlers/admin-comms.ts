@@ -248,10 +248,9 @@ export async function executeBroadcast(
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        // Append a one-line unsubscribe hint to every broadcast.
         await telegram.sendMessage(
           user.telegramId,
-          `${message}\n\n<i>Send /stop to unsubscribe from announcements.</i>`,
+          message,
           { parse_mode: "HTML" },
         );
         delivered = true;

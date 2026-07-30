@@ -13,7 +13,7 @@ import {
   BACK_BTN,
 } from "../keyboards";
 import { formatDate } from "../utils";
-import { logger } from "../lib/logger";
+import { logger } from "../../lib/logger";
 
 export async function showCommsMenu(ctx: Context & { session: BotSession }) {
   ctx.session.step = undefined;

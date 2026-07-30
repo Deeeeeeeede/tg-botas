@@ -448,25 +448,28 @@ To re-subscribe at any time:",
     ) {
       const data = ctx.session.data ?? {};
       const fileCount = ((data["fileCount"] as number) ?? 0) + 1;
+      const fromKlad = !!(data as any)["fromKlad"];
       ctx.session.step = undefined;
       ctx.session.data = undefined;
       await ctx.reply(
         `✅ Lot complete. ${fileCount} file(s) saved — one buyer will receive all of them.`,
       );
-      if (await isAdmin(ctx.from.id)) {
-        await showProductsMenu(ctx);
-      } else {
+      if (fromKlad || !(await isAdmin(ctx.from.id))) {
         await showKladMenu(ctx);
+      } else {
+        await showProductsMenu(ctx);
       }
     } else if (step === "admin:add_product:bulk") {
-      const count = (ctx.session.data as any)?.["bulkCount"] ?? 0;
+      const data = ctx.session.data ?? {};
+      const fromKlad = !!(data as any)["fromKlad"];
+      const count = (data as any)["bulkCount"] ?? 0;
       ctx.session.step = undefined;
       ctx.session.data = undefined;
       await ctx.reply(`✅ Bulk upload complete. ${count} units added.`);
-      if (await isAdmin(ctx.from.id)) {
-        await showProductsMenu(ctx);
-      } else {
+      if (fromKlad || !(await isAdmin(ctx.from.id))) {
         await showKladMenu(ctx);
+      } else {
+        await showProductsMenu(ctx);
       }
     }
   });
@@ -1391,12 +1394,24 @@ To re-subscribe at any time:",
           .where(eq(workersTable.id, workerData.id));
       }
 
-      ctx.session.data = { ...data, currentProductId: inserted?.id };
-      ctx.session.step = "admin:add_product:more_files";
-      await ctx.reply(
-        "✅ File saved! Send more files to add to this lot, or press Done to finish.",
-        inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
-      );
+      // If the worker included a caption with the first file (e.g. forwarded a
+      // photo+address in one message), treat it as a complete lot immediately —
+      // no need to press Done. Only wait for more files when there is no caption.
+      if (msg.caption) {
+        ctx.session.step = undefined;
+        ctx.session.data = undefined;
+        await ctx.reply(
+          `✅ Lot saved (1 file + caption). Opening worker menu…`,
+        );
+        await showKladMenu(ctx);
+      } else {
+        ctx.session.data = { ...data, currentProductId: inserted?.id };
+        ctx.session.step = "admin:add_product:more_files";
+        await ctx.reply(
+          "✅ File saved! Send more files to add to this lot, or press Done to finish.",
+          inlineKeyboard([[{ text: "✅ Done", callback_data: "klad:done" }]]),
+        );
+      }
     } else if (
       (step === "admin:add_product:more_files" ||
         step === "admin:add_product:content") &&

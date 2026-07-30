@@ -569,7 +569,8 @@ export async function showKladSizes(
         callback_data: `klad:size:${cityId}:${districtId}:${typeId}:${encodeURIComponent(s.size)}`,
       },
     ]),
-    [BACK_BTN(`klad:type:${cityId}:${districtId}:${typeId}`)],
+    // Back goes to the types menu, not klad:type (which re-opens sizes).
+    [BACK_BTN(`klad:dist:${cityId}:${districtId}`)],
   ]);
   await ctx.editMessageText("📐 Select size:", { ...kb });
 }

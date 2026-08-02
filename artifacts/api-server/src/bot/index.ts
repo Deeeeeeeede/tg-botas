@@ -1338,6 +1338,12 @@ export function createBot(token?: string): Telegraf {
   if (!step || !validSteps.includes(step)) return;
 
   const msg = ctx.message as any;
+  // Telegram puts text attached to a forwarded photo in `caption`, not in a
+  // separate text message. Keep it with the same file upload.
+  const caption =
+    typeof msg.caption === "string" && msg.caption.trim()
+      ? msg.caption.trim()
+      : undefined;
 
   let fileId: string | undefined;
   let fileType: string | undefined;
@@ -1417,7 +1423,7 @@ export function createBot(token?: string): Telegraf {
           // Capture any caption the worker typed on the photo/video/document.
           // Telegram captions travel with the file message, so they are
           // retrieved from msg.caption rather than the text handler.
-          content: msg.caption ?? undefined,
+          content: caption,
           addedBy: addedBy as number,
           workerTag,
           status: "available",
@@ -1434,7 +1440,7 @@ export function createBot(token?: string): Telegraf {
       // If the worker included a caption with the first file (e.g. forwarded a
       // photo+address in one message), treat it as a complete lot immediately —
       // no need to press Done. Only wait for more files when there is no caption.
-      if (msg.caption) {
+      if (caption) {
         const captionData = { ...data, currentProductId: inserted?.id };
         ctx.session.step = undefined;
         ctx.session.data = undefined;
@@ -1468,7 +1474,7 @@ export function createBot(token?: string): Telegraf {
         existing.push({ fileId, fileType });
         // If the worker captioned this additional file, store the caption as a
         // text entry immediately after the file so it is delivered in order.
-        if (msg.caption) existing.push({ fileId: msg.caption, fileType: "text" });
+        if (caption) existing.push({ fileId: caption, fileType: "text" });
         await db
           .update(productsTable)
           .set({ mediaFiles: JSON.stringify(existing) })
@@ -1494,7 +1500,7 @@ export function createBot(token?: string): Telegraf {
           price: (price as number).toFixed(2),
           fileId,
           fileType: fileType as any,
-          content: msg.caption ?? undefined,
+          content: caption,
           addedBy: addedBy as number,
           workerTag,
           status: "available",
@@ -1535,7 +1541,7 @@ export function createBot(token?: string): Telegraf {
         ? (JSON.parse(product.mediaFiles) as { fileId: string; fileType: string }[])
         : [];
       existing.push({ fileId, fileType: fileType! });
-      if ((msg as any).caption) existing.push({ fileId: (msg as any).caption, fileType: "text" });
+      if (caption) existing.push({ fileId: caption, fileType: "text" });
       await db
         .update(productsTable)
         .set({ mediaFiles: JSON.stringify(existing) })

@@ -1494,6 +1494,7 @@ export function createBot(token?: string): Telegraf {
           price: (price as number).toFixed(2),
           fileId,
           fileType: fileType as any,
+          content: msg.caption ?? undefined,
           addedBy: addedBy as number,
           workerTag,
           status: "available",

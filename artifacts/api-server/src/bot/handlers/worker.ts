@@ -315,7 +315,7 @@ async function sendUploadFiles(ctx: Context, row: UploadContentRow) {
     }
   }
 
-  // Send inline text content first when the upload is text-based.
+  // For text-only uploads, send the content text first.
   if (row.fileType === "text" && row.content) {
     await ctx.reply(`<code>${row.content}</code>`, { parse_mode: "HTML" });
   }
@@ -330,7 +330,13 @@ async function sendUploadFiles(ctx: Context, row: UploadContentRow) {
       await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
   }
 
-  if (files.length === 0 && !(row.fileType === "text" && row.content)) {
+  // For photo/video uploads that also have a caption, send the caption text
+  // after the media so nothing is lost when the worker forwarded a combined message.
+  if (row.fileType !== "text" && row.content) {
+    await ctx.reply(`<code>${row.content}</code>`, { parse_mode: "HTML" });
+  }
+
+  if (files.length === 0 && !row.content) {
     await ctx.reply("⚠️ This upload has no stored content.");
   }
 }

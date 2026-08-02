@@ -1706,6 +1706,14 @@ export async function sendProductMedia(ctx: any, product: any) {
         await ctx.reply(`<code>${f.fileId}</code>`, { parse_mode: "HTML" });
     } catch {}
   }
+
+  // Send the caption/text content that was saved alongside the photo
+  // (e.g. GPS coordinates forwarded with the image).
+  if (product.content) {
+    try {
+      await ctx.reply(`<code>${product.content}</code>`, { parse_mode: "HTML" });
+    } catch {}
+  }
 }
 
 // Context-free variant of sendProductMedia used by the background auto-confirm
@@ -1743,6 +1751,16 @@ export async function sendProductMediaTo(
         await telegram.sendMessage(chatId, `<code>${f.fileId}</code>`, {
           parse_mode: "HTML",
         });
+    } catch {}
+  }
+
+  // Send the caption/text content saved alongside the photo
+  // (e.g. GPS coordinates forwarded with the image).
+  if (product.content) {
+    try {
+      await telegram.sendMessage(chatId, `<code>${product.content}</code>`, {
+        parse_mode: "HTML",
+      });
     } catch {}
   }
 }
